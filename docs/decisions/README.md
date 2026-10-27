@@ -13,6 +13,8 @@
 | [0003](0003-borrow-a2a-vocabulary-not-adopt.md) | 借用 A2A 的词汇与数据模型，不实现其协议 | 已接受 | 2026-10-28 |
 | [0004](0004-wakeup-model-wait-first.md) | 唤醒以 `wait` 长轮询为主路径 | 已接受（阶段 1 已验证成立） | 2026-10-28 |
 | [0005](0005-wait-bounded-by-client-tool-timeout.md) | `wait` 默认 20s，上限由客户端 `max_block_sec` 声明并由 server clamp | 已接受 | 2026-10-28 |
+| [0006](0006-node-sqlite-per-member-stdio.md) | 阶段 2 选型：Node 内置 sqlite + 每成员一个 stdio 服务进程 | 已接受 | 2026-10-28 |
+| [0007](0007-token-issue-and-revoke.md) | token 由 CLI 签发、库内只存哈希，吊销即时回收任务 | 已接受 | 2026-10-28 |
 
 ## 模板
 

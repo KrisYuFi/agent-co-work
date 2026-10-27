@@ -10,6 +10,7 @@
 | 日期 | 来源 | 改动 |
 |---|---|---|
 | 2026-10-28 | 阶段 1 技术探针（[`probe/RESULTS.md`](../../probe/RESULTS.md) · [ADR 0005](../decisions/0005-wait-bounded-by-client-tool-timeout.md)） | §6.2 补 `wait` 时长受客户端工具调用超时约束（默认 20s、`max_block_sec` clamp、超时为正常返回、进度通知仅作优化）；§6.3 待实测项结案；§7 `space_attach`/`space_wait` 参数与返回值；§13 未定项 5/6 结案 |
+| 2026-10-28 | 阶段 2 原型实现（[ADR 0006](../decisions/0006-node-sqlite-per-member-stdio.md) · [ADR 0007](../decisions/0007-token-issue-and-revoke.md)） | §1.2 注明实现拓扑偏离（N 进程 + 单库）；§3.2 补 `message.sent` / `task.requeued` / `token.revoked`；§7 `space_attach` 增加 `cursor` 与 `constitution_version`；§13 未定项 3 结案 |
 
 > **版本策略**：仍有「草案（未实现）」阶段、无外部消费者时，修订**合并进本文**并记入上表；一旦阶段 2 产生实现或外部接入方，语义变更改为新建 `protocol-v0.2.md`、旧版标「已被取代」并保留。
 
@@ -74,6 +75,8 @@
 ```
 
 **单机与团队是同一套**：`--listen 127.0.0.1` 与 `--listen 0.0.0.0` 只是监听地址差异。
+
+**实现偏离（[ADR 0006](../decisions/0006-node-sqlite-per-member-stdio.md)）**：MCP over stdio 是 1:1 连接，N 个成员无法共享一条 stdio。阶段 2 因此改为「**N 个无状态 `space serve` 进程 + 单 sqlite（WAL）**」，`wait` 为库级轮询。跨机器（阶段 3）必然切回 HTTP，业务层不变。
 
 ### 1.3 拓扑层级与调用粒度正交
 
@@ -153,6 +156,9 @@ agent ──append──▶ events（append-only，只增不改，不可删）
 | `cp.judged` | `op`, `cp`, `verdict`, `slot`, `round` |
 | `loop.exhausted` | `slot`, `round`, `evidence[]` |
 | `resource.acquired` / `released` | `name`, `lease_id` |
+| `message.sent` | `msg_id`, `to`/`topic`, `text`, `refs[]`（消息不归档，但必须能唤醒 `wait`） |
+| `task.requeued` | `task_id`, `reason`（吊销 / token 失效导致任务回收回 `PENDING`） |
+| `token.revoked` | `member_id`, `tokens_revoked`, `tasks_requeued` |
 | `budget.consumed` | `member_id`, `op`, `tokens`, `cost` |
 
 ---
@@ -316,7 +322,7 @@ server 派活给 dev-hw
 
 | tool | 入参（要点） | 返回 |
 |---|---|---|
-| `space_attach` | `token`, `capabilities[]`（含 `max_block_sec`） | `{member, unread_tasks[], constitution_version}` |
+| `space_attach` | `token`, `capabilities[]`（含 `max_block_sec`）, `constitution_version` | `{member, unread_tasks[], constitution_version, cursor}` |
 | `space_detach` | — | `{ok}` |
 | `space_wait` | `since_cursor`, `timeout_sec`（默认 20；server clamp 到 `max_block_sec`） | `{events[], tasks[], cursor, reason, effective_timeout_sec}`（阻塞；顺带续租） |
 | `space_task_create` | `type`, `to` \| `role`, `op`, `step`, `inputs[]`, `expected`, `refs[]`, `priority`, `claims` | `{task_id}` |
@@ -434,23 +440,27 @@ A2A 是**点对点**的（Client↔Server，无中央 broker）；房间/成员/
 
 ---
 
-## 12. 存储草案（sqlite）
+## 12. 存储（sqlite，已实现）
+
+阶段 2 实现见 `src/space/db.mjs`。与草案的差异：**`state` 有物化投影表**（`tasks.state`），
+真相仍是 `events`；`space_verify` 随时把投影与事件归约对账，漂移即报错。
 
 ```
-members(id, role, scopes[], token_hash, status, last_seen_at)
-constitution(version, body, updated_at)
-tasks(id, op, step, type, slot, refs[], to, role, state, attempts,
-      lease_id, lease_until, expected_json, created_at)
-task_events(id, task_id, from_state, to_state, by, reason, at)
-artifacts(id, uri, sha256, size, media_type, by, op, step, at)
-resources(name, lease_id, holder, lease_until)
-events(id, kind, payload_json, at)        -- append-only，trace 来源
-slots(op, slot, round)                    -- 轮次计数，R2 强制
-budget(member_id, op, tokens, cost)
-messages(id, to|topic, text, refs[], at)  -- TTL 清理，不归档
+meta(key, value)                     -- schema_version / constitution_version / created_at
+members(id, role, kind, capabilities, status, created_at, last_seen_at)
+tokens(token_hash, prefix, member_id, role, scopes[], issued_at, expires_at, revoked_at)
+tasks(id, op, step, type, slot, to_member, role, state, attempts, claims_max, claims_count,
+      inputs[], expected{}, refs[], lease_id, lease_until, lease_sec, owner,
+      handoff_uri, handoff_sha, reason, created_by, created_at, updated_at)
+events(id, kind, task_id, member_id, payload{}, at)   -- append-only，唯一真相 + trace
+artifacts(id, uri, sha256, size, media_type, by_member, task_id, meta, created_at)
+messages(id, to_member, topic, text, refs[], by_member, at)
+resources(name, lease_id, member_id, until)
+slots(op, slot, round)                                -- R2 的载体
 ```
 
-`state` 不单独存表：由 `events` 归约得出，按需缓存快照。
+- `events.id` 同时是 `wait` 的游标：`attach` 返回当前最大 id，`wait(since_cursor)` 从这个 id 往后读。
+- 预算表（`budget`）**尚未实现**，`BUDGET_EXCEEDED` 是预留错误码。
 
 ---
 
@@ -460,7 +470,7 @@ messages(id, to|topic, text, refs[], at)  -- TTL 清理，不归档
 |---|---|---|---|
 | 1 | 交接的**上下文成本** | 每个新 session 要重读宪法+handoff+产物，token 可能失控。需把「最小信息集」精确到文件的具体章节 | 原型跑通后，实测成本再定 |
 | 2 | **经验分享平面**（跨算子长期记忆） | 与控制面/数据面都不同层：要可检索、要防污染。是第三套东西 | 单独设计 |
-| 3 | token 发放/吊销的**操作流程** | 安全入口，决定能否真的「权限外的同事接不进来」 | 实现前必须定 |
+| 3 | token 发放/吊销的**操作流程** | 安全入口，决定能否真的「权限外的同事接不进来」 | ✅ 已定：CLI 签发 + 库内只存哈希（[ADR 0007](../decisions/0007-token-issue-and-revoke.md)） |
 | 4 | 大文件存储后端（NAS / 对象存储 / LFS） | 影响 `space_publish` 的 uri 形态 | 原型可用本地目录先凑 |
 | 5 | **headless 能力实测** | 决定 D 档是否存在 | ✅ 已定：两个 runtime 均成立（阶段 1） |
 | 6 | 长 `wait` 是否被 runtime 硬超时打断 | **若被打算，B 档不成立，架构退回 A 档** | ✅ 已定：不成断，但受客户端超时约束（ADR 0005） |
@@ -473,7 +483,7 @@ messages(id, to|topic, text, refs[], at)  -- TTL 清理，不归档
 
 | 步 | 内容 | 验证什么 |
 |---|---|---|
-| **1** | **技术探针**（不写空间）：各 CLI headless 能否跑 / 能否挂 MCP stdio / 单 turn 内阻塞工具是否被硬超时 | **唯一「猜错要重做」的假设**：B 档是否成立 |
-| 2 | sqlite + localhost + MCP stdio，两个假成员跑一轮：`create → wait → claim → publish → handoff → DONE →` 下游 `wait` 收到 → 人中途插话 | 骨架是否成立 |
+| **1** | ✅ **技术探针**（不写空间）：各 CLI headless 能否跑 / 能否挂 MCP stdio / 单 turn 内阻塞工具是否被硬超时 | **唯一「猜错要重做」的假设**：B 档成立（[`probe/RESULTS.md`](../../probe/RESULTS.md)） |
+| 2 | ✅ sqlite + MCP stdio，假成员 + **真实 agent** 跑一轮：`create → wait → claim → publish → handoff → DONE →` 下游 `wait` 收到 → 人中途插话 | 骨架成立（[`test/README.md`](../../test/README.md)） |
 | 3 | 接**一个真实环节**：建议选 **FPGA 那一步** | 同时验证跨机器（docker↔Win）、人工介入、资源互斥三个硬需求 |
 | 4 | 再谈 `ops-direct-invoke` 全量映射（8 阶段 / 6 个 CP / 三条回退链） | 状态机能否承载现有工作流 |

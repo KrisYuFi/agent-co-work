@@ -2,7 +2,7 @@
 
 > **Agent 协作空间**：让多个 agent 以**独立、可人工干预的会话**协作，而不是由一个主 agent 在进程内偷偷调用子 agent。
 >
-> **当前状态：设计阶段（协议草案 v0.1）+ 阶段 1 技术探针已通过；尚未实现协作空间。**
+> **当前状态：阶段 2 最小原型已跑通**（真实 agent 端到端 8/8）。仍是原型，不是可用产品。
 
 ---
 
@@ -40,23 +40,30 @@ agent-co-work/
 ├── ROADMAP.md                   # 分阶段开发计划与通过标准
 ├── AGENTS.md                    # 本仓的开发约定（给 agent 看）
 ├── CHANGELOG.md                 # 变更日志
-├── probe/                       # 阶段 1 技术探针（不实现空间）
-│   ├── README.md                # 如何复现
-│   ├── RESULTS.md               # 逐 runtime 实测结论
-│   ├── run.mjs                  # (scenario, runtime) 运行器
-│   ├── mcp/server.mjs           # 零依赖 stdio MCP 探针服务器
-│   └── results/raw/*.json       # 原始记录
+├── src/                         # 阶段 2 起：最小原型（零外部依赖）
+│   ├── cli.mjs                  # space init / token / serve / attach / trace / verify
+│   └── space/
+│       ├── db.mjs               # sqlite schema + 事务
+│       ├── events.mjs           # 事件流 + 状态归约 + 可重放对账
+│       ├── invariants.mjs       # 服务端不变式（迁移表 / R1 / R2 / R3 / handoff）
+│       ├── tokens.mjs           # 身份签发与吊销
+│       ├── service.mjs          # 领域操作
+│       └── mcp.mjs              # MCP over stdio + 15 个 space_* 工具
+├── test/                        # 阶段 2 验收
+│   ├── acceptance.mjs           # 4 个假成员，25 项
+│   ├── e2e-real.mjs             # 真实 opencode + DSH 会话
+│   └── README.md
+├── probe/                       # 阶段 1 技术探针
+│   ├── README.md / RESULTS.md
+│   ├── run.mjs
+│   ├── mcp/server.mjs
+│   └── results/raw/*.json
 └── docs/
     ├── background.md            # 问题现场：场景、需求、约束、被否掉的方案
     ├── design/
-    │   ├── README.md            # 设计文档索引
+    │   ├── README.md
     │   └── protocol-v0.1.md     # 协议草案：状态机 / 接口 / 不变式 / schema
-    └── decisions/               # 架构决策记录（ADR）
-        ├── 0001-central-hub-over-shared-filesystem.md
-        ├── 0002-two-planes-and-event-sourced-state.md
-        ├── 0003-borrow-a2a-vocabulary-not-adopt.md
-        ├── 0004-wakeup-model-wait-first.md
-        └── 0005-wait-bounded-by-client-tool-timeout.md
+    └── decisions/               # ADR 0001–0007
 ```
 
 **阅读顺序建议**：`background.md` → `decisions/` → `design/protocol-v0.1.md` → `ROADMAP.md`。
@@ -66,15 +73,26 @@ agent-co-work/
 
 ## 现在能用吗
 
-**不能。** 仓库当前没有协作空间实现——只有文档，加一套阶段 1 探针。
+**能跑原型，还不能当产品用。** 阶段 2 的最小原型已经跑通：
 
-那个「猜错就要重做」的前提已经测完了（[`probe/RESULTS.md`](probe/RESULTS.md)）：
+```bash
+node src/cli.mjs init --dir ./space
+node src/cli.mjs token issue --dir ./space --member dev-code --role developer > dev-code.token
+node src/cli.mjs serve --dir ./space --token-file dev-code.token    # MCP over stdio，供 agent 接入
+node src/cli.mjs trace --dir ./space                                 # 事件流就是 trace
+```
 
-> **agent 能在自己的一个 turn 里调用阻塞工具等待任务** —— ✅ 成立。
+已实测成立的部分：
 
-两个 runtime（opencode / dsh）都能 headless 跑、都能挂 MCP stdio、单次阻塞 150s 不被打断。**但有一个必须知道的约束**：单次阻塞时长受**客户端工具调用超时**限制，默认值只有 30s / 60s，超时即断。
+- **真实 agent 能挂上去干活**：opencode 当开发成员、DSH 当 PM，无人干预跑完
+  `attach → create → wait → claim → publish → DONE + handoff → 下游解析`（8/8）
+- **越权由 server 拒绝**，不是靠提示词劝阻（25 项验收全通过）
+- **人中途插话**后 agent 能恢复等待
+- **状态可重放**：`space verify` 断言投影与事件归约一致
 
-所以 `wait` 默认 20s + 由客户端声明上限（[ADR 0005](docs/decisions/0005-wait-bounded-by-client-tool-timeout.md)）。下一步是阶段 2 的最小原型。
+还没做的：跨机器（阶段 3，必然引入 HTTP）、R4/R5 两条不变式、预算熔断、经验分享平面（阶段 5）。
+
+细节：协议语义看 [`docs/design/protocol-v0.1.md`](docs/design/protocol-v0.1.md)，验证过程看 [`probe/RESULTS.md`](probe/RESULTS.md) 与 [`test/README.md`](test/README.md)。
 
 ---
 

@@ -1,10 +1,10 @@
 # ROADMAP
 
 > 分阶段推进，**每阶段有明确通过标准**，不通过不进入下一阶段。
-> 当前进度：**阶段 0、1 已完成**，阶段 2 待启动。
+> 当前进度：**阶段 0、1、2 已完成**，阶段 3 待启动。
 
 ```
-阶段 0 ──✅── 阶段 1 ──✅── 阶段 2 ──▶ 阶段 3 ──▶ 阶段 4 ──▶ 阶段 5+
+阶段 0 ──✅── 阶段 1 ──✅── 阶段 2 ──✅── 阶段 3 ──▶ 阶段 4 ──▶ 阶段 5+
  设计          技术探针      最小原型      真实环节      全量映射      能力扩展
             (阻塞假设已验) (骨架成立)   (三个硬需求)   (承载现流程)
 ```
@@ -65,13 +65,13 @@ P3 在**至少一个** runtime 上成立 → 可以进入阶段 2，并以该 ru
 
 ---
 
-## 阶段 2 · 最小原型 ⬅ 下一步
+## 阶段 2 · 最小原型 ✅ 已完成
 
 | 项 | 内容 |
 |---|---|
 | **目标** | 跑通骨架：两个成员 + 一个算子的一条最短链路 |
-| **技术选型**（默认） | 单进程 + **sqlite** + localhost + **MCP over stdio** |
-| **交付物** | `space serve`、`space attach`、两个假成员会话、一份 trace 查看方式 |
+| **技术选型**（默认） | 单进程 + **sqlite** + localhost + **MCP over stdio** → 落地为 **N 个无状态进程 + 单 sqlite（WAL）**，理由见 [ADR 0006](docs/decisions/0006-node-sqlite-per-member-stdio.md) |
+| **交付物** | `src/`：`space init / token / serve / attach / trace / verify`；`test/`：假成员验收 + 真实 runtime 端到端 |
 
 ### 验收剧本
 
@@ -91,6 +91,18 @@ P3 在**至少一个** runtime 上成立 → 可以进入阶段 2，并以该 ru
 - 越权操作被 server 拒绝（不是被 prompt 劝阻）
 - 事件流可作为调试 trace 使用
 
+### 实测结论（2026-10-28）
+
+| 通过标准 | 证据 | 结果 |
+|---|---|---|
+| 全链路无人干预推进 | `test/e2e-real.mjs`：**真实 agent**（opencode 当 dev-code + DSH 当 pm）跑完 attach → create → wait → claim → publish → DONE+handoff → 下游解析 | ✅ 8/8 |
+| 人插话后恢复 | `test/acceptance.mjs`：挂着的 `wait` 被放弃 → 人发消息 → 恢复并收到 | ✅ |
+| 越权被 server 拒绝 | `LEASE_MISMATCH` / `FORBIDDEN_ROLE` / `RESOURCE_BUSY` / `TOKEN_REVOKED` 四个码，全部由 server 返回而非提示词劝阻 | ✅ 25/25 |
+| 事件流可作 trace | `space trace`（人可读）、`space verify`（投影 == 事件归约） | ✅ |
+
+未实现、明确留给阶段 4：**R4 杠杆评估门**、**R5 修改不越权**（需要现有工作流语义）、预算熔断（`BUDGET_EXCEEDED` 预留）。
+E2E 的提示词目前把协议步骤写死在步骤里，阶段 4 要下沉到宪法 + server 校验。
+
 ### 风险
 
 - 上下文成本会在这里第一次显形（每个新 session 要重读宪法 + handoff + 产物）
@@ -98,7 +110,7 @@ P3 在**至少一个** runtime 上成立 → 可以进入阶段 2，并以该 ru
 
 ---
 
-## 阶段 3 · 接入一个真实环节
+## 阶段 3 · 接入一个真实环节 ⬅ 下一步
 
 | 项 | 内容 |
 |---|---|

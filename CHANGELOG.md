@@ -4,10 +4,51 @@
 
 ## [Unreleased]
 
-### Planned（阶段 2：最小原型）
-- `space serve` / `space attach`：sqlite + localhost + MCP over stdio
-- 验收剧本：两个假成员跑通 `create → wait → claim → publish → DONE + handoff`
-- 人中途插话打断 `wait`；越权操作被 server 拒绝
+### Planned（阶段 3：接入一个真实环节）
+- 接 FPGA 那一步：跨机器（docker ↔ Windows）+ 人工介入 + 资源互斥三合一
+- 必然引入 HTTP 传输（ADR 0006 的「何时重审」触发）
+
+---
+
+## [0.3.0] - 2026-10-28
+
+**阶段 2 完成：最小原型跑通。真实 agent（opencode + DSH）端到端 8/8，假成员验收 25/25。**
+
+### Added
+
+- **`src/` 最小原型**（零外部依赖，Node 内置 `node:sqlite`）
+  - `src/cli.mjs` — `space init / token issue|list|revoke / serve / attach / trace / verify / tasks / members`
+  - `src/space/db.mjs` — sqlite schema + `BEGIN IMMEDIATE` 事务封装（WAL）
+  - `src/space/events.mjs` — append-only 事件流、状态归约、`verifyProjection` 可重放对账
+  - `src/space/invariants.mjs` — 迁移表、R1 终态不可变、handoff 必填、认领互斥、R2 轮次槽位、R3 硬门槛归人
+  - `src/space/tokens.mjs` — 签发/校验/吊销（库内只存 sha256 + prefix），吊销即回收名下任务
+  - `src/space/service.mjs` — attach / wait / task_* / publish / msg / state_get / resource_*
+  - `src/space/mcp.mjs` — MCP over stdio（自建 NDJSON 传输，15 个 `space_*` 工具）
+- **`test/`** — `acceptance.mjs`（4 个假成员，25 项）、`e2e-real.mjs`（真实 opencode + DSH 会话，8 项）、`README.md`
+- **ADR 0006** — 阶段 2 选型：Node 内置 sqlite + 每成员一个 stdio 服务进程（N 进程共享单库）
+- **ADR 0007** — token 由 CLI 签发、库内只存哈希、吊销即时回收任务（结案协议未定项 #3）
+
+### Changed
+
+- **协议 §1.2** — 注明实现偏离（「单进程 + 单 sqlite」→「N 个无状态进程 + 单 sqlite」，ADR 0006）
+- **协议 §3.2** — 事件类型补 `message.sent` / `task.requeued` / `token.revoked`
+- **协议 §7** — `space_attach` 增加 `cursor` 与 `constitution_version` 入参；`space_wait` 语义见 ADR 0005
+- **协议 §12** — 存储从草案改为已实现 schema，并说明「投影 + 事件归约对账」的实现形态
+- **ROADMAP** — 阶段 2 标记完成，附通过标准逐条证据；阶段 3 成为下一步
+
+### 验收结果
+
+| 项 | 证据 | 结果 |
+|---|---|---|
+| 全链路无人干预 | 真实 agent：opencode(dev-code) + DSH(pm) | ✅ 8/8 |
+| 越权被 server 拒绝 | `LEASE_MISMATCH`/`FORBIDDEN_ROLE`/`RESOURCE_BUSY`/`TOKEN_REVOKED` | ✅ |
+| 人插话后恢复 wait | 假成员验收：放弃挂起的 wait → 收消息 → 恢复 | ✅ |
+| 事件流可作 trace | `space trace` + `space verify` | ✅ |
+
+### Notes
+
+- 明确**未实现**：R4 杠杆评估门、R5 修改不越权、预算熔断（等阶段 4 与现有工作流对齐）
+- E2E 的提示词把协议步骤写死在步骤里；阶段 4 要下沉到宪法 + server 校验，提示词只留判断口径
 
 ---
 
