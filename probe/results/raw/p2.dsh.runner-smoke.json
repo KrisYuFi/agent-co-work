@@ -1,0 +1,27 @@
+{
+  "scenario": "p2",
+  "runtime": "dsh",
+  "label": "runner-smoke",
+  "startedAt": "2026-10-27T16:32:34.920Z",
+  "params": {
+    "blockSeconds": 120,
+    "mcpTimeoutMs": 30000,
+    "progressIntervalMs": 15000
+  },
+  "prompt": "Call the tool named \"mcp__probe__probe_ping\" with no arguments, then reply with exactly its raw text output and nothing else.",
+  "exitCode": 0,
+  "timedOut": false,
+  "wallMs": 6239,
+  "verdict": {
+    "toolCalled": true,
+    "toolCompleted": true,
+    "serverBlockMs": null,
+    "progressNotifications": 0,
+    "clientGaveUpEarly": false
+  },
+  "serverEvents": 12,
+  "stdoutTail": "PONG 2026-10-27T16:32:40.322Z\n",
+  "stderrTail": "",
+  "scratch": "/Users/krisyu/Desktop/CANN/agent-co-work/probe/work/p2.dsh.runner-smoke.2026-10-27T16-32-34",
+  "serverLog": "/Users/krisyu/Desktop/CANN/agent-co-work/probe/work/p2.dsh.runner-smoke.2026-10-27T16-32-34/mcp-server.jsonl"
+}

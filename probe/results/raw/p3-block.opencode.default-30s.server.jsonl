@@ -1,0 +1,13 @@
+{"ts":1793118769339,"sinceStartMs":2,"event":"server:start","pid":31380,"logPath":"/Users/krisyu/Desktop/CANN/agent-co-work/probe/work/p3-block.opencode.default-30s.2026-10-27T16-32-46/mcp-server.jsonl"}
+{"ts":1793118769340,"sinceStartMs":3,"event":"request","pid":31380,"method":"initialize","id":0}
+{"ts":1793118769340,"sinceStartMs":3,"event":"initialize","pid":31380,"protocolVersion":"2025-11-25","clientInfo":{"name":"opencode","version":"1.18.23"}}
+{"ts":1793118769346,"sinceStartMs":9,"event":"request","pid":31380,"method":"notifications/initialized","id":null}
+{"ts":1793118769346,"sinceStartMs":9,"event":"initialized","pid":31380}
+{"ts":1793118769346,"sinceStartMs":9,"event":"request","pid":31380,"method":"tools/list","id":1}
+{"ts":1793118805662,"sinceStartMs":36325,"event":"request","pid":31380,"method":"tools/call","id":2}
+{"ts":1793118805662,"sinceStartMs":36325,"event":"tools/call:start","pid":31380,"tool":"probe_block","args":{"seconds":90},"progressToken":2}
+{"ts":1793118835669,"sinceStartMs":66332,"event":"request","pid":31380,"method":"notifications/cancelled","id":null}
+{"ts":1793118835670,"sinceStartMs":66333,"event":"cancelled","pid":31380,"params":{"requestId":2,"reason":"McpError: MCP error -32001: Request timed out"}}
+{"ts":1793118836027,"sinceStartMs":66690,"event":"request","pid":31380,"method":"notifications/cancelled","id":null}
+{"ts":1793118836027,"sinceStartMs":66690,"event":"cancelled","pid":31380,"params":{"requestId":2,"reason":"AbortError: The operation was aborted."}}
+{"ts":1793118837432,"sinceStartMs":68095,"event":"stdin:end","pid":31380}

@@ -1,0 +1,22 @@
+{"ts":1793119456197,"sinceStartMs":6,"event":"server:start","pid":34640,"logPath":"/Users/krisyu/Desktop/CANN/agent-co-work/probe/work/p3-progress.opencode.progress-default-30s.2026-10-27T16-44-11/mcp-server.jsonl"}
+{"ts":1793119456201,"sinceStartMs":10,"event":"request","pid":34640,"method":"initialize","id":0}
+{"ts":1793119456201,"sinceStartMs":10,"event":"initialize","pid":34640,"protocolVersion":"2025-11-25","clientInfo":{"name":"opencode","version":"1.18.23"}}
+{"ts":1793119456220,"sinceStartMs":29,"event":"request","pid":34640,"method":"notifications/initialized","id":null}
+{"ts":1793119456221,"sinceStartMs":30,"event":"initialized","pid":34640}
+{"ts":1793119456221,"sinceStartMs":30,"event":"request","pid":34640,"method":"tools/list","id":1}
+{"ts":1793119493697,"sinceStartMs":37506,"event":"request","pid":34640,"method":"tools/call","id":2}
+{"ts":1793119493700,"sinceStartMs":37509,"event":"tools/call:start","pid":34640,"tool":"probe_block_progress","args":{"seconds":150,"intervalMs":15000},"progressToken":2}
+{"ts":1793119508703,"sinceStartMs":52512,"event":"progress:sent","pid":34640,"progress":1,"elapsedMs":15003}
+{"ts":1793119523705,"sinceStartMs":67514,"event":"progress:sent","pid":34640,"progress":2,"elapsedMs":30005}
+{"ts":1793119538708,"sinceStartMs":82517,"event":"progress:sent","pid":34640,"progress":3,"elapsedMs":45008}
+{"ts":1793119553710,"sinceStartMs":97519,"event":"progress:sent","pid":34640,"progress":4,"elapsedMs":60010}
+{"ts":1793119568713,"sinceStartMs":112522,"event":"progress:sent","pid":34640,"progress":5,"elapsedMs":75013}
+{"ts":1793119583716,"sinceStartMs":127525,"event":"progress:sent","pid":34640,"progress":6,"elapsedMs":90015}
+{"ts":1793119598718,"sinceStartMs":142527,"event":"progress:sent","pid":34640,"progress":7,"elapsedMs":105018}
+{"ts":1793119613721,"sinceStartMs":157530,"event":"progress:sent","pid":34640,"progress":8,"elapsedMs":120021}
+{"ts":1793119628723,"sinceStartMs":172532,"event":"progress:sent","pid":34640,"progress":9,"elapsedMs":135023}
+{"ts":1793119643703,"sinceStartMs":187512,"event":"progress:sent","pid":34640,"progress":10,"elapsedMs":150003}
+{"ts":1793119643703,"sinceStartMs":187512,"event":"tools/call:end","pid":34640,"tool":"probe_block_progress","ok":true,"blockedMs":150003}
+{"ts":1793119644144,"sinceStartMs":187953,"event":"request","pid":34640,"method":"notifications/cancelled","id":null}
+{"ts":1793119644144,"sinceStartMs":187953,"event":"cancelled","pid":34640,"params":{"requestId":2,"reason":"AbortError: The operation was aborted."}}
+{"ts":1793119645743,"sinceStartMs":189552,"event":"stdin:end","pid":34640}

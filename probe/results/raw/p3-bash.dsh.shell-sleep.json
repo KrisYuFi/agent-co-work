@@ -1,0 +1,27 @@
+{
+  "scenario": "p3-bash",
+  "runtime": "dsh",
+  "label": "shell-sleep",
+  "startedAt": "2026-10-27T16:37:55.817Z",
+  "params": {
+    "blockSeconds": 150,
+    "mcpTimeoutMs": 30000,
+    "progressIntervalMs": 15000
+  },
+  "prompt": "Run exactly this shell command and wait for it to finish: sleep 150. Then reply with exactly: BASH_DONE",
+  "exitCode": 0,
+  "timedOut": false,
+  "wallMs": 156893,
+  "verdict": {
+    "toolCalled": false,
+    "toolCompleted": false,
+    "serverBlockMs": null,
+    "progressNotifications": 0,
+    "clientGaveUpEarly": false
+  },
+  "serverEvents": 0,
+  "stdoutTail": "BASH_DONE\n",
+  "stderrTail": "dsh: reasoning:\nThe user wants me to run exactly `sleep 150` and wait for it to finish, then reply exactly \"BASH_DONE\". Let me run it with a timeout above 150 seconds.\n\nThis is a probe directory, seems like a test of shell sleep behavior. Just run the command.\ndsh: reasoning:\nExit code presumably 0, no marker means success (no [exit code: N] marker). Reply exactly \"BASH_DONE\".\n\nBut requirement \"reply with exactly: BASH_DONE\". So just that.\n",
+  "scratch": "/Users/krisyu/Desktop/CANN/agent-co-work/probe/work/p3-bash.dsh.shell-sleep.2026-10-27T16-37-55",
+  "serverLog": "/Users/krisyu/Desktop/CANN/agent-co-work/probe/work/p3-bash.dsh.shell-sleep.2026-10-27T16-37-55/mcp-server.jsonl"
+}

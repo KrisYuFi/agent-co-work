@@ -1,0 +1,12 @@
+{"ts":1793118759036,"sinceStartMs":4,"event":"server:start","pid":31307,"logPath":"/Users/krisyu/Desktop/CANN/agent-co-work/probe/work/p2.dsh.runner-smoke.2026-10-27T16-32-34/mcp-server.jsonl"}
+{"ts":1793118759045,"sinceStartMs":13,"event":"request","pid":31307,"method":"server/discover","id":"server-discover-probe-1"}
+{"ts":1793118759172,"sinceStartMs":2,"event":"server:start","pid":31308,"logPath":"/Users/krisyu/Desktop/CANN/agent-co-work/probe/work/p2.dsh.runner-smoke.2026-10-27T16-32-34/mcp-server.jsonl"}
+{"ts":1793118759173,"sinceStartMs":3,"event":"request","pid":31308,"method":"initialize","id":0}
+{"ts":1793118759173,"sinceStartMs":3,"event":"initialize","pid":31308,"protocolVersion":"2025-11-25","clientInfo":{"name":"dsh-mcp-client","version":"0.0.1"}}
+{"ts":1793118759176,"sinceStartMs":6,"event":"request","pid":31308,"method":"notifications/initialized","id":null}
+{"ts":1793118759176,"sinceStartMs":6,"event":"initialized","pid":31308}
+{"ts":1793118759177,"sinceStartMs":7,"event":"request","pid":31308,"method":"tools/list","id":1}
+{"ts":1793118760322,"sinceStartMs":1152,"event":"request","pid":31308,"method":"tools/call","id":2}
+{"ts":1793118760322,"sinceStartMs":1152,"event":"tools/call:start","pid":31308,"tool":"probe_ping","args":{},"progressToken":null}
+{"ts":1793118760322,"sinceStartMs":1152,"event":"tools/call:end","pid":31308,"tool":"probe_ping","ok":true}
+{"ts":1793118761114,"sinceStartMs":1944,"event":"stdin:end","pid":31308}

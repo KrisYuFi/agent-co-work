@@ -1,0 +1,111 @@
+# 阶段 1 实测结论
+
+> 实测时间：2026-10-28 · 探针版本：`probe/run.mjs` + `probe/mcp/server.mjs`
+> 复现方式见 [README.md](README.md)。原始记录与服务器日志在 `results/raw/`（`<tag>.json` + `<tag>.server.jsonl`），**判决只认服务器日志**。
+
+---
+
+## 一句话结论
+
+**B 档（`wait` 长轮询）成立，但有一个必须写进协议的约束**：单次 `wait` 的阻塞时长受**客户端 MCP 工具调用超时**限制，而这个超时的默认值只有 **opencode 30s / DSH 60s**，且**只有 opencode 能用进度通知续期**。
+→ 可直接进阶段 2；协议须补一条：`wait` 默认时长 ≤ 20s + 客户端超时必须显式配置。详见 [ADR 0005](../docs/decisions/0005-wait-bounded-by-client-tool-timeout.md)。
+
+| 假设 | opencode 1.18.23 | dsh (headless) |
+|---|---|---|
+| **P1** headless 非交互执行 | ✅ 通过（`opencode run`，exit 0） | ✅ 通过（`dsh --profile headless`，exit 0） |
+| **P2** MCP over stdio | ✅ 通过（协商 `2025-11-25`） | ✅ 通过（有 `server/discover` 兼容性代价） |
+| **P3** 单 turn 内阻塞工具 | ✅ **通过**（调高超时后可阻塞 150s） | ✅ **通过**（调高超时后可阻塞 150s） |
+| P3 默认配置下 | ❌ 30s 处 `MCP error -32001` | ❌ 60s 处 `Request timed out` |
+| P3 进度通知续期 | ✅ 30s 超时下靠 15s 进度通知撑住 150s | ❌ 不发 progress token，无此机制 |
+
+ROADMAP 的阶段 1 通过标准是「P3 在**至少一个** runtime 上成立」。**两个都成立**，且其中一个（opencode）连默认配置都能靠进度通知救回来。
+
+---
+
+## 逐 runtime 结论表
+
+| runtime | P1 headless | P2 MCP stdio | P3 阻塞下限（默认配置） | P3 阻塞（调高超时） | 进度续期 | 首字延迟 |
+|---|---|---|---|---|---|---|
+| **opencode** 1.18.23 | ✅ `opencode run` | ✅ 工具名 `probe_<tool>` | ❌ 30s | ✅ 150s（实测） | ✅ `resetTimeoutOnProgress` | ~40s |
+| **dsh** 0.1.2-rc.1 | ✅ `dsh headless` | ✅ 工具名 `mcp__probe__<tool>` | ❌ 60s | ✅ 150s（实测） | ❌ 不请求 progress | ~5s |
+| claude / codex | 未安装，**未实测** | — | — | — | — | — |
+
+> **首字延迟**：opencode 每次 headless 启动约 40s 开销（会话语料初始化），DSH 约 5s。这是 D 档（`supervisor` 拉起）的**实际成本**，不是缺陷但要计入预算。
+
+---
+
+## 关键证据
+
+### P3 失败的确切形状
+
+默认超时下，**服务器还在干活，客户端先放弃了**——这正是「阻塞工具被打断」：
+
+| runtime | 参数 | wall | 服务器 | 客户端报错 |
+|---|---|---|---|---|
+| opencode | `block=90s`, `timeout=30000` | 70.7s | `tools/call:start` 有，`end` 无 | `MCP error -32001: Request timed out` |
+| dsh | `block=90s`, `timeout=60000` | 64.8s | `tools/call:start` 有，`end` 无 | `Request timed out` |
+
+两边都在**配置值附近**断开（30s / 60s），说明打断来源是**工具调用超时，不是 turn 超时**。
+
+### 调高超时后完全恢复
+
+| runtime | 参数 | wall | 服务器实际阻塞 | 判决 |
+|---|---|---|---|---|
+| opencode | `block=150s`, `timeout=600000` | 195.6s | **150.0s** | ✅ 工具跑完，agent 拿到真实返回值 |
+| dsh | `block=150s`, `timeout=600000` | 156.9s | **150.0s** | ✅ 同上 |
+
+**没有观察到 turn 级硬超时**：两个 runtime 的 turn 都能撑过 150s 的单个工具调用。
+
+### 进度通知：只有 opencode 认
+
+| runtime | 参数 | 结果 |
+|---|---|---|
+| opencode | `block=150s`, `timeout=30000`, 每 15s 一条 progress | ✅ 撑满 150s，服务器共发 **10** 条进度通知 |
+| dsh | `block=150s`, `timeout=60000`, 同样发进度 | ❌ 60s 处仍断；**服务器发出 0 条**——DSH 的 MCP 桥**根本不在请求里带 `progressToken`** |
+
+读码印证：`dsh-mcp-client` 走 `client.request({method:'tools/call'}, {signal, timeout})`，而 opencode 走 `callTool(..., {resetTimeoutOnProgress: true, timeout})`。**不能把「靠进度通知续期」当跨 runtime 通用机制。**
+
+### 对照：内置 shell 工具不受这个限制
+
+`p3-bash`（`sleep 150`，不走 MCP）：
+
+| runtime | wall | 结果 |
+|---|---|---|
+| opencode | 195.3s | ✅ 正常跑完，返回 `BASH_DONE` |
+| dsh | 156.9s | ✅ 正常跑完，返回 `BASH_DONE` |
+
+所以「30s 限制」是 **MCP 工具调用层**的，不是 agent 的 turn，也不是 shell 工具。**阻塞能力本身没问题，卡的是 MCP 客户端的单次调用超时。**
+
+### P2 的一个兼容性代价：DSH 先问 `server/discover`
+
+DSH 的 MCP 桥在标准 `initialize` 之前先发一个 `server/discover`（id 形如 `server-discover-probe-1`）。探针服务器回了 `-32601 Method not found`，DSH 于是**杀掉进程、重启一个、再走标准 `initialize`**：
+
+```jsonl
+{"event":"server:start","pid":31307}
+{"event":"request","method":"server/discover","id":"server-discover-probe-1"}
+{"event":"server:start","pid":31308}          ← 重启
+{"event":"request","method":"initialize","id":0}
+{"event":"initialize","protocolVersion":"2025-11-25","clientInfo":{"name":"dsh-mcp-client"}}
+```
+
+代价是每次 attach 多一次进程启动（~130ms）。**对空间服务端的要求**：要么实现 `server/discover`，要么接受「每个成员 attach 时被拉起两次」——若 `attach` 有副作用（注册、租约、审计），这条会变成正确性问题，不只是性能问题。
+
+---
+
+## 对协议的推论
+
+1. **`wait` 的默认阻塞时长必须小**：取 **20s**（低于 opencode 的 30s 默认值，留余量）。`wait` 本来就带 `since_cursor`，超时返回后循环再调即可，语义不变。
+2. **空间不能假设客户端能挂任意久**：客户端超时是**客户端侧配置**，服务端强制不了。所以这条必须同时体现在两处——协议里写清默认值（机制），空间宪法里给出 attach 前的配置指引（约定）。仅靠后者就是「写进文档当约定」，本仓明确反对。
+3. **进度通知只能做优化项，不能做正确性依赖**：opencode 支持、DSH 不支持，且这是各 CLI 私有实现细节，随时可变。
+4. **`wait` 返回即续租**这条设计经受住了考验：超时返回是无害的，重连再 attach 即可，与 §6.2 的描述一致，不需要改。
+
+---
+
+## 未测 / 下一步
+
+| # | 项 | 何时 |
+|---|---|---|
+| 1 | `claude -p` / `codex exec` 的同三项实测 | 有环境时；**结论可能不同，不能外推** |
+| 2 | 阻塞上限的真实天花板（300s / 600s / 更长） | 阶段 2 实测前，按需推一次即可 |
+| 3 | 工具调用超时后 session 的可用性（能否继续调工具、上下文是否被污染） | 阶段 2（影响 `wait` 超时返回后的行为） |
+| 4 | 人中途插话打断 `wait`（§6.2 的核心卖点） | 阶段 2 验收剧本已含此项 |

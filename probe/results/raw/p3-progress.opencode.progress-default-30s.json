@@ -1,0 +1,27 @@
+{
+  "scenario": "p3-progress",
+  "runtime": "opencode",
+  "label": "progress-default-30s",
+  "startedAt": "2026-10-27T16:44:11.874Z",
+  "params": {
+    "blockSeconds": 150,
+    "mcpTimeoutMs": 30000,
+    "progressIntervalMs": 15000
+  },
+  "prompt": "Call the tool named \"probe_probe_block_progress\" exactly once with {\"seconds\": 150, \"intervalMs\": 15000}. Wait for it to return, then reply with exactly its raw text output and nothing else. Do not call it again.",
+  "exitCode": 0,
+  "timedOut": false,
+  "wallMs": 193999,
+  "verdict": {
+    "toolCalled": true,
+    "toolCompleted": true,
+    "serverBlockMs": 150003,
+    "progressNotifications": 10,
+    "clientGaveUpEarly": false
+  },
+  "serverEvents": 22,
+  "stdoutTail": "BLOCKED 150s (actual 150s)\n",
+  "stderrTail": "\u001b[0m\n> build · deepseek-v4-pro\n\u001b[0m\n\u001b[0m⚙ \u001b[0mprobe_probe_block_progress {\"seconds\":150,\"intervalMs\":15000}\n",
+  "scratch": "/Users/krisyu/Desktop/CANN/agent-co-work/probe/work/p3-progress.opencode.progress-default-30s.2026-10-27T16-44-11",
+  "serverLog": "/Users/krisyu/Desktop/CANN/agent-co-work/probe/work/p3-progress.opencode.progress-default-30s.2026-10-27T16-44-11/mcp-server.jsonl"
+}

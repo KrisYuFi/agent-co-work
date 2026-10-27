@@ -1,0 +1,27 @@
+{
+  "scenario": "p3-progress",
+  "runtime": "dsh",
+  "label": "progress-default-60s",
+  "startedAt": "2026-10-27T16:44:11.875Z",
+  "params": {
+    "blockSeconds": 150,
+    "mcpTimeoutMs": 60000,
+    "progressIntervalMs": 15000
+  },
+  "prompt": "Call the tool named \"mcp__probe__probe_block_progress\" exactly once with {\"seconds\": 150, \"intervalMs\": 15000}. Wait for it to return, then reply with exactly its raw text output and nothing else. Do not call it again.",
+  "exitCode": 0,
+  "timedOut": false,
+  "wallMs": 66874,
+  "verdict": {
+    "toolCalled": true,
+    "toolCompleted": false,
+    "serverBlockMs": null,
+    "progressNotifications": 0,
+    "clientGaveUpEarly": true
+  },
+  "serverEvents": 13,
+  "stdoutTail": "Error: Request timed out\n",
+  "stderrTail": "dsh: reasoning:\nThe user wants me to call the tool exactly once with those parameters, wait for it to return, then reply with exactly its raw text output and nothing else.\n\nLet me call it.\ndsh: reasoning:\nThe tool call returned \"Error: Request timed out\". The user said call it exactly once, wait for it to return, then reply with exactly its raw text output and nothing else. Do not call it again.\n\nSo the raw text output is \"Error: Request timed out\". I should reply with exactly that and nothing else.\n\nThe instruction: \"Wait for it to return, then reply with exactly its raw text output and nothing else.\" The tool returned an error. I should output exactly that text. Should I include \"Error: \" prefix? The raw text output is \"Error: Request timed out\". I'll reply exactly that.\n",
+  "scratch": "/Users/krisyu/Desktop/CANN/agent-co-work/probe/work/p3-progress.dsh.progress-default-60s.2026-10-27T16-44-11",
+  "serverLog": "/Users/krisyu/Desktop/CANN/agent-co-work/probe/work/p3-progress.dsh.progress-default-60s.2026-10-27T16-44-11/mcp-server.jsonl"
+}

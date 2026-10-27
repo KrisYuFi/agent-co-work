@@ -1,0 +1,12 @@
+{"ts":1793119237288,"sinceStartMs":5,"event":"server:start","pid":33577,"logPath":"/Users/krisyu/Desktop/CANN/agent-co-work/probe/work/p3-block.opencode.raised-600s.2026-10-27T16-40-32/mcp-server.jsonl"}
+{"ts":1793119237291,"sinceStartMs":8,"event":"request","pid":33577,"method":"initialize","id":0}
+{"ts":1793119237291,"sinceStartMs":8,"event":"initialize","pid":33577,"protocolVersion":"2025-11-25","clientInfo":{"name":"opencode","version":"1.18.23"}}
+{"ts":1793119237304,"sinceStartMs":21,"event":"request","pid":33577,"method":"notifications/initialized","id":null}
+{"ts":1793119237304,"sinceStartMs":21,"event":"initialized","pid":33577}
+{"ts":1793119237304,"sinceStartMs":21,"event":"request","pid":33577,"method":"tools/list","id":1}
+{"ts":1793119275911,"sinceStartMs":38628,"event":"request","pid":33577,"method":"tools/call","id":2}
+{"ts":1793119275912,"sinceStartMs":38629,"event":"tools/call:start","pid":33577,"tool":"probe_block","args":{"seconds":150},"progressToken":2}
+{"ts":1793119425914,"sinceStartMs":188631,"event":"tools/call:end","pid":33577,"tool":"probe_block","ok":true,"blockedMs":150002}
+{"ts":1793119426358,"sinceStartMs":189075,"event":"request","pid":33577,"method":"notifications/cancelled","id":null}
+{"ts":1793119426358,"sinceStartMs":189075,"event":"cancelled","pid":33577,"params":{"requestId":2,"reason":"AbortError: The operation was aborted."}}
+{"ts":1793119428306,"sinceStartMs":191023,"event":"stdin:end","pid":33577}

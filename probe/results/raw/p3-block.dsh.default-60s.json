@@ -1,0 +1,27 @@
+{
+  "scenario": "p3-block",
+  "runtime": "dsh",
+  "label": "default-60s",
+  "startedAt": "2026-10-27T16:32:46.889Z",
+  "params": {
+    "blockSeconds": 90,
+    "mcpTimeoutMs": 60000,
+    "progressIntervalMs": 15000
+  },
+  "prompt": "Call the tool named \"mcp__probe__probe_block\" exactly once with {\"seconds\": 90}. Wait for it to return, then reply with exactly its raw text output and nothing else. Do not call it again.",
+  "exitCode": 0,
+  "timedOut": false,
+  "wallMs": 64809,
+  "verdict": {
+    "toolCalled": true,
+    "toolCompleted": false,
+    "serverBlockMs": null,
+    "progressNotifications": 0,
+    "clientGaveUpEarly": true
+  },
+  "serverEvents": 13,
+  "stdoutTail": "Error: Request timed out\n",
+  "stderrTail": "dsh: reasoning:\nThe tool call timed out. The user asked to call it exactly once, wait for it to return, then reply with exactly its raw text output. It returned an error: \"Error: Request timed out\". Hmm. The raw text output is \"Error: Request timed out\". I should reply with exactly that and nothing else. But is that the \"raw text output\"? The tool did return. I shouldn't call it again (instructed not to). Reply exactly the raw text.\n\nThe instruction says reply with exactly its raw text output and nothing else. So output \"Error: Request timed out\".\n",
+  "scratch": "/Users/krisyu/Desktop/CANN/agent-co-work/probe/work/p3-block.dsh.default-60s.2026-10-27T16-32-46",
+  "serverLog": "/Users/krisyu/Desktop/CANN/agent-co-work/probe/work/p3-block.dsh.default-60s.2026-10-27T16-32-46/mcp-server.jsonl"
+}

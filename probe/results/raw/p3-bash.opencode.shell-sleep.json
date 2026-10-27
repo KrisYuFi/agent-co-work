@@ -1,0 +1,27 @@
+{
+  "scenario": "p3-bash",
+  "runtime": "opencode",
+  "label": "shell-sleep",
+  "startedAt": "2026-10-27T16:34:27.078Z",
+  "params": {
+    "blockSeconds": 150,
+    "mcpTimeoutMs": 30000,
+    "progressIntervalMs": 15000
+  },
+  "prompt": "Run exactly this shell command and wait for it to finish: sleep 150. Then reply with exactly: BASH_DONE",
+  "exitCode": 0,
+  "timedOut": false,
+  "wallMs": 195341,
+  "verdict": {
+    "toolCalled": false,
+    "toolCompleted": false,
+    "serverBlockMs": null,
+    "progressNotifications": 0,
+    "clientGaveUpEarly": false
+  },
+  "serverEvents": 0,
+  "stdoutTail": "BASH_DONE\n",
+  "stderrTail": "\u001b[0m\n> build · deepseek-v4-pro\n\u001b[0m\n\u001b[0m$ \u001b[0msleep 150\n(no output)\n\u001b[0m\n",
+  "scratch": "/Users/krisyu/Desktop/CANN/agent-co-work/probe/work/p3-bash.opencode.shell-sleep.2026-10-27T16-34-27",
+  "serverLog": "/Users/krisyu/Desktop/CANN/agent-co-work/probe/work/p3-bash.opencode.shell-sleep.2026-10-27T16-34-27/mcp-server.jsonl"
+}

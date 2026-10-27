@@ -1,0 +1,27 @@
+{
+  "scenario": "p2",
+  "runtime": "opencode",
+  "label": "runner-smoke",
+  "startedAt": "2026-10-27T16:31:49.811Z",
+  "params": {
+    "blockSeconds": 120,
+    "mcpTimeoutMs": 30000,
+    "progressIntervalMs": 15000
+  },
+  "prompt": "Call the tool named \"probe_probe_ping\" with no arguments, then reply with exactly its raw text output and nothing else.",
+  "exitCode": 0,
+  "timedOut": false,
+  "wallMs": 44816,
+  "verdict": {
+    "toolCalled": true,
+    "toolCompleted": true,
+    "serverBlockMs": null,
+    "progressNotifications": 0,
+    "clientGaveUpEarly": false
+  },
+  "serverEvents": 12,
+  "stdoutTail": "PONG 2026-10-27T16:32:32.507Z\n",
+  "stderrTail": "\u001b[0m\n> build · deepseek-v4-pro\n\u001b[0m\n\u001b[0m⚙ \u001b[0mprobe_probe_ping Unknown\n",
+  "scratch": "/Users/krisyu/Desktop/CANN/agent-co-work/probe/work/p2.opencode.runner-smoke.2026-10-27T16-31-49",
+  "serverLog": "/Users/krisyu/Desktop/CANN/agent-co-work/probe/work/p2.opencode.runner-smoke.2026-10-27T16-31-49/mcp-server.jsonl"
+}

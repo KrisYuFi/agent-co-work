@@ -31,7 +31,8 @@ build/
 *.token
 secrets/
 
-# 探针产物
+# 探针产物（临时工作目录可丢弃；判决证据在 probe/results/raw/ 里随记录入库）
+probe/work/
 probe/**/out/
 probe/**/*.log
 
