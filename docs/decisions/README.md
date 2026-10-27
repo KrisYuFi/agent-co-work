@@ -11,7 +11,8 @@
 | [0001](0001-central-hub-over-shared-filesystem.md) | 用中心服务做协作总线，而非共享文件系统 | 已接受 | 2026-10-28 |
 | [0002](0002-two-planes-and-event-sourced-state.md) | 消息/状态/产物三分平面；状态由事件归约 | 已接受 | 2026-10-28 |
 | [0003](0003-borrow-a2a-vocabulary-not-adopt.md) | 借用 A2A 的词汇与数据模型，不实现其协议 | 已接受 | 2026-10-28 |
-| [0004](0004-wakeup-model-wait-first.md) | 唤醒以 `wait` 长轮询为主路径 | 已接受（待阶段 1 验证） | 2026-10-28 |
+| [0004](0004-wakeup-model-wait-first.md) | 唤醒以 `wait` 长轮询为主路径 | 已接受（阶段 1 已验证成立） | 2026-10-28 |
+| [0005](0005-wait-bounded-by-client-tool-timeout.md) | `wait` 默认 20s，上限由客户端 `max_block_sec` 声明并由 server clamp | 已接受 | 2026-10-28 |
 
 ## 模板
 

@@ -5,6 +5,14 @@
 > 定位：把 agent 编排从「进程内主 agent 同步调用 subagent」改为「多个独立 session 经中心协作空间异步协作」。
 > 目的：让每个角色 agent 成为**可人工干预、可跨机器、可重启恢复**的独立会话。
 
+## 变更记录
+
+| 日期 | 来源 | 改动 |
+|---|---|---|
+| 2026-10-28 | 阶段 1 技术探针（[`probe/RESULTS.md`](../../probe/RESULTS.md) · [ADR 0005](../decisions/0005-wait-bounded-by-client-tool-timeout.md)） | §6.2 补 `wait` 时长受客户端工具调用超时约束（默认 20s、`max_block_sec` clamp、超时为正常返回、进度通知仅作优化）；§6.3 待实测项结案；§7 `space_attach`/`space_wait` 参数与返回值；§13 未定项 5/6 结案 |
+
+> **版本策略**：仍有「草案（未实现）」阶段、无外部消费者时，修订**合并进本文**并记入上表；一旦阶段 2 产生实现或外部接入方，语义变更改为新建 `protocol-v0.2.md`、旧版标「已被取代」并保留。
+
 ---
 
 ## 0. 动机与边界
@@ -270,6 +278,9 @@ if slot.round > limit: → LOOP_EXHAUSTED（拒绝创建，落盘证据，暂停
 
 - `wait` 在 server 端是**挂住连接**（非轮询风暴）。
 - `wait` 返回时**顺带续 lease + 心跳**，一次调用做三件事，不会漏续租。
+- **单次 `wait` 的时长受客户端工具调用超时约束**：实测默认值仅为 opencode 30s / DSH 60s，超时即断（[ADR 0005](../decisions/0005-wait-bounded-by-client-tool-timeout.md)）。因此 `timeout_sec` **默认 20s**；客户端在 `capabilities.max_block_sec` 自报上限，**server 把 `timeout_sec` clamp 到该值**并在返回值回显 `effective_timeout_sec`。未声明按 20s。
+- **超时返回是正常返回**（`reason: "timeout"`），不是错误，agent 必须继续循环。协议层不允许把超时当失败——否则 agent 会「礼貌地」放弃等待。
+- **进度通知只作优化**：server 可在 `wait` 期间发 `notifications/progress`（opencode 据此续期超时，实测有效），但 DSH 连 `progressToken` 都不发，**不得把续期当通用机制**。
 - **人打字即打断**：人在会话里说一句话就是新 turn，挂着的 wait 作废（无害）。这就是「随时介入」，且**不需要任何额外机制**——交互式 session 天然可打断。
 - 断线重连 = 再 `attach`，server 补投未确认任务。
 
@@ -288,7 +299,8 @@ server 派活给 dev-hw
 - **B 与 D 走同一套协议**，server 不关心 agent 是人开的还是自己起的。
   → 这一条决定「人工调试」与「夜间无人值守」不需要两套实现。
 - D 档要求 `supervisor` scope，并受 `max_concurrent` + **预算上限**约束。
-- **待实测**：各 CLI 的 headless 能力、能否挂 MCP stdio、单 turn 内阻塞工具是否被硬超时打断。
+- **已实测**（阶段 1，见 [`probe/RESULTS.md`](../../probe/RESULTS.md)）：两个 runtime 的 headless 与 MCP stdio 均成立，**单 turn 内阻塞 150s 不被打断**（工具调用超时可配）。
+  → 残留约束是**客户端超时需显式配置**，见 ADR 0005；`server/discover` 兼容性代价见同文。
 
 ### 6.4 A 档（兜底）：纯拉取
 
@@ -304,9 +316,9 @@ server 派活给 dev-hw
 
 | tool | 入参（要点） | 返回 |
 |---|---|---|
-| `space_attach` | `token`, `capabilities[]` | `{member, unread_tasks[], constitution_version}` |
+| `space_attach` | `token`, `capabilities[]`（含 `max_block_sec`） | `{member, unread_tasks[], constitution_version}` |
 | `space_detach` | — | `{ok}` |
-| `space_wait` | `since_cursor`, `timeout_sec` | `{events[], tasks[], cursor}`（阻塞；顺带续租） |
+| `space_wait` | `since_cursor`, `timeout_sec`（默认 20；server clamp 到 `max_block_sec`） | `{events[], tasks[], cursor, reason, effective_timeout_sec}`（阻塞；顺带续租） |
 | `space_task_create` | `type`, `to` \| `role`, `op`, `step`, `inputs[]`, `expected`, `refs[]`, `priority`, `claims` | `{task_id}` |
 | `space_task_claim` | `task_id`, `lease_sec` | `{lease_id, lease_until}` \| `TASK_ALREADY_CLAIMED` |
 | `space_task_heartbeat` | `lease_id` | `{lease_until}` |
@@ -450,8 +462,8 @@ messages(id, to|topic, text, refs[], at)  -- TTL 清理，不归档
 | 2 | **经验分享平面**（跨算子长期记忆） | 与控制面/数据面都不同层：要可检索、要防污染。是第三套东西 | 单独设计 |
 | 3 | token 发放/吊销的**操作流程** | 安全入口，决定能否真的「权限外的同事接不进来」 | 实现前必须定 |
 | 4 | 大文件存储后端（NAS / 对象存储 / LFS） | 影响 `space_publish` 的 uri 形态 | 原型可用本地目录先凑 |
-| 5 | **headless 能力实测** | 决定 D 档是否存在 | **最先做** |
-| 6 | 长 `wait` 是否被 runtime 硬超时打断 | **若被打算，B 档不成立，架构退回 A 档** | **最先做** |
+| 5 | **headless 能力实测** | 决定 D 档是否存在 | ✅ 已定：两个 runtime 均成立（阶段 1） |
+| 6 | 长 `wait` 是否被 runtime 硬超时打断 | **若被打算，B 档不成立，架构退回 A 档** | ✅ 已定：不成断，但受客户端超时约束（ADR 0005） |
 | 7 | 静默模式在空间里的语义 | 现有 `mode=silent` 如何映射（不弹问卷、默认决策、`pending_user_review`） | 协议稳定后 |
 | 8 | A2A 互通的最终形态 | 门面 or Extension | 有第三方接入需求时 |
 

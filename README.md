@@ -2,7 +2,7 @@
 
 > **Agent 协作空间**：让多个 agent 以**独立、可人工干预的会话**协作，而不是由一个主 agent 在进程内偷偷调用子 agent。
 >
-> **当前状态：设计阶段（协议草案 v0.1），尚未实现。**
+> **当前状态：设计阶段（协议草案 v0.1）+ 阶段 1 技术探针已通过；尚未实现协作空间。**
 
 ---
 
@@ -40,6 +40,12 @@ agent-co-work/
 ├── ROADMAP.md                   # 分阶段开发计划与通过标准
 ├── AGENTS.md                    # 本仓的开发约定（给 agent 看）
 ├── CHANGELOG.md                 # 变更日志
+├── probe/                       # 阶段 1 技术探针（不实现空间）
+│   ├── README.md                # 如何复现
+│   ├── RESULTS.md               # 逐 runtime 实测结论
+│   ├── run.mjs                  # (scenario, runtime) 运行器
+│   ├── mcp/server.mjs           # 零依赖 stdio MCP 探针服务器
+│   └── results/raw/*.json       # 原始记录
 └── docs/
     ├── background.md            # 问题现场：场景、需求、约束、被否掉的方案
     ├── design/
@@ -49,7 +55,8 @@ agent-co-work/
         ├── 0001-central-hub-over-shared-filesystem.md
         ├── 0002-two-planes-and-event-sourced-state.md
         ├── 0003-borrow-a2a-vocabulary-not-adopt.md
-        └── 0004-wakeup-model-wait-first.md
+        ├── 0004-wakeup-model-wait-first.md
+        └── 0005-wait-bounded-by-client-tool-timeout.md
 ```
 
 **阅读顺序建议**：`background.md` → `decisions/` → `design/protocol-v0.1.md` → `ROADMAP.md`。
@@ -59,13 +66,15 @@ agent-co-work/
 
 ## 现在能用吗
 
-**不能。** 仓库当前只有文档，没有代码。
+**不能。** 仓库当前没有协作空间实现——只有文档，加一套阶段 1 探针。
 
-按 [ROADMAP](ROADMAP.md)，**阶段 1 是技术探针**（不写空间、只验证假设）。原因是整套方案压在一个尚未验证的前提上：
+那个「猜错就要重做」的前提已经测完了（[`probe/RESULTS.md`](probe/RESULTS.md)）：
 
-> **agent 能在自己的一个 turn 里调用阻塞工具等待任务。**
+> **agent 能在自己的一个 turn 里调用阻塞工具等待任务** —— ✅ 成立。
 
-如果某个 runtime 的 turn 有硬超时、或阻塞调用会被打断，主唤醒方案（`wait` 长轮询）就不成立，设计要退回纯拉取 + 人工通知。**这是唯一「猜错就要重做」的地方，所以必须先测。**
+两个 runtime（opencode / dsh）都能 headless 跑、都能挂 MCP stdio、单次阻塞 150s 不被打断。**但有一个必须知道的约束**：单次阻塞时长受**客户端工具调用超时**限制，默认值只有 30s / 60s，超时即断。
+
+所以 `wait` 默认 20s + 由客户端声明上限（[ADR 0005](docs/decisions/0005-wait-bounded-by-client-tool-timeout.md)）。下一步是阶段 2 的最小原型。
 
 ---
 
