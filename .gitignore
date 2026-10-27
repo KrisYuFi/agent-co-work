@@ -1,0 +1,41 @@
+# macOS
+.DS_Store
+._*
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# 运行时数据（协作空间的本地实例，不入库）
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+.space/
+
+# 环境与密钥
+.env
+.env.*
+*.token
+secrets/
+
+# 探针产物
+probe/**/out/
+probe/**/*.log
+
+# 编辑器
+.idea/
+.vscode/
+*.swp
