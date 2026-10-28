@@ -163,6 +163,18 @@
 
 ## [Unreleased]
 
+### Planned（ADR 0011：入场方式改造，**未实现**）
+
+目标是让日常操作变成「开 session → 说一句」，而不是现在的「四条命令 + 改配置」。
+
+- **`space connect`** —— 成员侧网关：启动不连空间，提供 `space_join({url, token})` / `space_leave()`，
+  把 `space_*` 透传给 hub 并注入 bearer
+- **`space init --members pm:pm,architect:architect,qa:qa,me:human:human`** —— 一条命令建空间 + 签发全部具名 token（0600）
+- 身份模型不变：token ↔ 成员名 + 角色，agent 靠人给的 token 入场，`space_attach` 回显身份，**不能自封**
+- 已知代价（写进 ADR 0011）：token 进提示词会进会话历史；上下文压缩后需重新给；凭证库作为可选增强保留
+
+
+
 ### Planned（阶段 3：接入一个真实环节）
 - 接 FPGA 那一步：跨机器（docker ↔ Windows）+ 人工介入 + 资源互斥三合一
 - 必然引入 HTTP 传输（ADR 0006 的「何时重审」触发）

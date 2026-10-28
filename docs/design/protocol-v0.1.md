@@ -11,6 +11,7 @@
 |---|---|---|
 | 2026-10-28 | 阶段 1 技术探针（[`probe/RESULTS.md`](../../probe/RESULTS.md) · [ADR 0005](../decisions/0005-wait-bounded-by-client-tool-timeout.md)） | §6.2 补 `wait` 时长受客户端工具调用超时约束（默认 20s、`max_block_sec` clamp、超时为正常返回、进度通知仅作优化）；§6.3 待实测项结案；§7 `space_attach`/`space_wait` 参数与返回值；§13 未定项 5/6 结案 |
 | 2026-10-28 | 阶段 2 原型实现（[ADR 0006](../decisions/0006-node-sqlite-per-member-stdio.md) · [ADR 0007](../decisions/0007-token-issue-and-revoke.md)） | §1.2 注明实现拓扑偏离（N 进程 + 单库）；§3.2 补 `message.sent` / `task.requeued` / `token.revoked`；§7 `space_attach` 增加 `cursor` 与 `constitution_version`；§13 未定项 3 结案 |
+| 2026-10-28 | 入场方式改为运行时 join（[ADR 0011](../decisions/0011-gateway-connect-and-runtime-join.md)） | §2.2 补身份交付方式（token ↔ 成员名，agent 不能自封）；§7.2 新增网关侧工具 `space_join`/`space_leave`（不属于 hub） |
 | 2026-10-28 | 多机实跑发现租约过短（[ADR 0010](../decisions/0010-lease-budget-and-active-renewal.md)） | §4.2/§6.2/§12 默认租约 300s→900s；新增「活跃即心跳」：任何工具调用顺延持有租约；过期只由第三方操作触发扫描 |
 | 2026-10-28 | 独立 review 打回后的修复（[ADR 0008](../decisions/0008-reclaim-semantics-and-mechanism-integrity.md)） | §2.2 标注路径级 ACL 未实现；§2.3 attach 成为硬前置；§4.2 补中断态出边与回收释放租约、标注 `REJECTED`/`EXPIRED` 缺口；§5 R2/R3 改为服务端确定归属、R4/R5 标注未实现；§7 按实现重写接口表（16 个工具）；§11 补 4 个真实错误码；§12 说明 claims 语义与资源无回收 |
 
@@ -109,6 +110,10 @@
 - `attach` 必须携带 token；token 由空间管理员（人）发放，绑定 `member_id` + `role` + `scopes[]` + 有效期。
 - 支持吊销；吊销后已发出的 task 自动回 `PENDING`。
 - **权威边界在 server**：不在共享目录里放"权限配置文件"——那只能防误操作，不能防越权。
+- **身份的交付方式（ADR 0011）**：token ↔ (成员名, 角色, scopes, kind) 在**签发时**确定，成员名就是 `member_id`。
+  agent 靠人给它的 token 入场，连上后 `space_attach` 会回显它自己的身份；**agent 不能自封身份**，
+  它只能提交别人给它的凭据（bearer 语义：拿到 token 即该身份）。
+  两块令牌的交付路线——提示词直给（顺手，但进会话历史）与本地凭证库（安全，但需先配）——见 ADR 0011。
 - 写权限模型（继承 `ops-direct-invoke` 的类别语义，加一维 owner）：
 
 | 维度 | 取值 |
@@ -376,6 +381,22 @@ server 派活给 dev-hw
 
 **R6 广播不得直接触发干活**：广播与决议必须分离——先广播通知，再原子认领。
 否则同一 role 的两个 agent 都会认为该干，必然重复劳动。
+
+### 7.2 网关侧工具（成员侧，不属于 hub）
+
+上面那张表是 **hub 提供的工具**。成员侧还有一个网关进程 `space connect`（ADR 0011），
+它启动时不连任何空间，只提供两个工具：
+
+| tool | 入参 | 返回 | 语义 |
+|---|---|---|---|
+| `space_join` | `url`（hub 的 `/mcp` 地址）, `token` | `{ok, hub}` | 连接到该空间；此后上表所有工具可用 |
+| `space_leave` | — | `{ok}` | 断开，回到未加入状态 |
+
+为什么需要它：**MCP 工具集在会话启动时就固定了**，会话中途无法动态挂上一个新的 MCP server。
+所以「在提示词里说一句就连上某个空间」的前提，是启动时已经有一个**能收参数的连接器**在等着。
+
+网关只做透传（把 `space_*` 的 JSON-RPC 转发给 hub 并注入 `Authorization`），不持有任何状态；
+`join` 之后**仍要** `space_attach` 报到——连接与报到是两件事。
 
 ---
 
