@@ -20,4 +20,6 @@
 
 - 验收报告写进空间产物目录（文件名见任务 `expected.filename`），`space_publish` 登记后随 `DONE` 交回。
 - 判定用 `space_task_accept` 记录：`verdict=pass|hold`，`gaps[]` 写问题清单。
+- **判 `pass` 时不许带阻断级 gap**（`{blocking:true}` 或 `severity:'blocker'`）——server 会直接拒绝。
+  有阻断级问题就必须判 `hold` 走 revision；能带下的只能写成「细化项」。这是机制，不是建议。
 - 然后 `task_transition(to=DONE, payload.handoff=...)` 把结论交回。

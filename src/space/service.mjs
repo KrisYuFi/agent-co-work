@@ -76,6 +76,7 @@ function hydrateTask(row) {
     owner: row.owner,
     lease_until: row.lease_until,
     handoff: row.handoff_uri ? { uri: row.handoff_uri, sha256: row.handoff_sha } : null,
+    reason: row.reason ?? null,
     created_by: row.created_by,
     updated_at: row.updated_at,
   }
@@ -604,6 +605,18 @@ export async function taskAccept(ctx, args = {}) {
     throw new SpaceError('EVIDENCE_INSUFFICIENT', 'verdict must be one of pass | hold | relax')
   }
 
+  // pass 与 blocking gap 是矛盾的判定。实跑里 QA 判 pass 却写下「需求基线与文档冲突」这种
+  // 阻断级问题，靠 PM 读 gaps 才补救回来——不该让编排方的细心承担正确性。
+  if (verdict === 'pass') {
+    const blocking = (args.gaps ?? []).filter((g) => g && (g.blocking === true || g.severity === 'blocker' || g.severity === 'blocking'))
+    if (blocking.length > 0) {
+      throw new SpaceError(
+        'EVIDENCE_INSUFFICIENT',
+        `verdict=pass 不能带阻断级 gap（${blocking.map((g) => g.id ?? '?').join(',')}）：要么判 hold 并打回，要么把它降级为「可带下的细化项」`,
+      )
+    }
+  }
+
   if (verdict === 'relax') {
     assertCanRelaxHardGate(member) // 只有 human
     const ev = args.evidence ?? {}
@@ -617,6 +630,7 @@ export async function taskAccept(ctx, args = {}) {
   }
 
   return txn(db, () => {
+    db.prepare('update tasks set reason = ?, updated_at = ? where id = ?').run(`verdict:${verdict}`, Date.now(), task.id)
     appendEvent(db, {
       kind: 'cp.judged',
       taskId: task.id,
@@ -641,6 +655,7 @@ export async function taskList(ctx, args = {}) {
   const where = []
   const params = []
   if (f.op) (where.push('op = ?'), params.push(f.op))
+  if (f.step) (where.push('step = ?'), params.push(f.step))
   if (f.state) (where.push('state = ?'), params.push(f.state))
   if (f.to) (where.push('to_member = ?'), params.push(f.to))
   if (f.role) (where.push('role = ?'), params.push(f.role))

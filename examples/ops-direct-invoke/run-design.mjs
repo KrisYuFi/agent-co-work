@@ -2,34 +2,40 @@
 /**
  * examples/ops-direct-invoke/run-design.mjs
  *
- * 跑 ops-direct-invoke 的**编码之前**那一段：需求 → 设计 → 设计 review。
+ * 跑 ops-direct-invoke 的「需求 → 设计 → 设计 review」段：
  *   1.1 需求分析 → CP1(QA+人) → 2.1 测试方案 → CP2.1(QA) → 2.2 开发方案 → CP2.2(QA+人)
- * 其中 CP1 故意被打回一次，用来验证 revision 任务 + R2 轮次槽位。
  *
- * 参与者：
- *   - pm        脚本（本进程），用与 agent 完全相同的 MCP 工具派活/收活
- *   - architect **真实 agent**（dsh）
- *   - qa        **真实 agent**（opencode）
- *   - human     脚本（扮演人，回答 CP 问卷）
+ * 四个成员**都是成员**：pm / architect / qa 是真实 LLM 会话，human 是脚本扮演的人。
+ * PM 不再由本脚本代劳——它自己用 space_* 工具派活、等活、判定、打回。
  *
- * 用法：node examples/ops-direct-invoke/run-design.mjs [--keep] [--architect dsh|opencode] [--qa dsh|opencode]
+ * 用法：node examples/ops-direct-invoke/run-design.mjs [--keep]
+ *       [--pm dsh|opencode] [--architect dsh|opencode] [--qa dsh|opencode] [--timeout-min 30]
  */
 
 import { spawn } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, statSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, statSync, readdirSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir, homedir } from 'node:os'
 import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
+import { execFileSync } from 'node:child_process'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO = resolve(HERE, '..', '..')
 const CLI = join(REPO, 'src', 'cli.mjs')
+const NODE = process.execPath
 const KEEP = process.argv.includes('--keep')
-const arg = (name, dflt) => (process.argv.includes(`--${name}`) ? process.argv[process.argv.indexOf(`--${name}`) + 1] : dflt)
-const RUNTIME_ARCH = arg('architect', 'dsh')
-const RUNTIME_QA = arg('qa', 'opencode')
+const opt = (name, dflt) => {
+  const i = process.argv.indexOf(`--${name}`)
+  return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : dflt
+}
+const RT = {
+  pm: opt('pm', 'dsh'),
+  architect: opt('architect', 'dsh'),
+  qa: opt('qa', 'opencode'),
+}
+const TIMEOUT_MIN = Number(opt('timeout-min', '30'))
 const OC_MODEL = process.env.PROBE_OPENCODE_MODEL || 'deepseek/deepseek-v4-pro'
 const OP = 'add'
 
@@ -40,16 +46,20 @@ const check = (name, ok, detail = '') => {
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex')
+const spaceCli = (args) => execFileSync(NODE, [CLI, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+const PATH = `${dirname(NODE)}:${process.env.PATH}`
 
 // ───────────────────────────────────────────── 空间准备
 const spaceDir = mkdtempSync(join(tmpdir(), 'space-ops-'))
 const artifactsDir = join(spaceDir, 'artifacts', OP)
 mkdirSync(artifactsDir, { recursive: true })
 mkdirSync(join(spaceDir, 'tokens'), { recursive: true })
-writeFileSync(join(spaceDir, 'artifacts', `${OP}-需求输入.md`), `# 算子需求（用户原始输入）\n\n实现 add 算子：逐元素相加，输入两个 float32 tensor，输出一个。\n目标：先跑通功能，性能不是本次重点。\n`)
+const requirementInput = `# 算子需求（用户原始输入）
 
-const { execFileSync } = await import('node:child_process')
-const spaceCli = (args) => execFileSync(process.execPath, [CLI, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+实现 add 算子：逐元素相加，输入两个 float32 tensor（同形状、无广播），输出一个。
+目标：先跑通功能，性能不是本次重点。目标芯片按 910B 假设，若不确定就记为待决项。
+`
+writeFileSync(join(spaceDir, 'artifacts', `${OP}-需求输入.md`), requirementInput)
 
 spaceCli(['init', '--dir', spaceDir])
 for (const [member, kind, role] of [
@@ -60,9 +70,11 @@ for (const [member, kind, role] of [
 ]) {
   writeFileSync(join(spaceDir, 'tokens', `${member}.token`), spaceCli(['token', 'issue', '--dir', spaceDir, '--member', member, '--role', role, '--kind', kind]))
 }
-console.log(`space: ${spaceDir}\n协议：ops-direct-invoke 设计段（1.1 → CP1 → 2.1 → CP2.1 → 2.2 → CP2.2）\n`)
 
-// ───────────────────────────────────────────── 两个真实 agent 的配置
+console.log(`space: ${spaceDir}`)
+console.log(`pm → ${RT.pm}，architect → ${RT.architect}，qa → ${RT.qa}（三个真实会话 + 脚本扮演的人）\n`)
+
+// ───────────────────────────────────────────── 运行时配置 / 启动
 function writeRuntimeConfig(runtime, member, dir) {
   const tokenFile = join(spaceDir, 'tokens', `${member}.token`)
   if (runtime === 'opencode') {
@@ -71,11 +83,10 @@ function writeRuntimeConfig(runtime, member, dir) {
       JSON.stringify(
         {
           $schema: 'https://opencode.ai/config.json',
-          // 产物目录在 agent 的 project 目录之外，opencode 默认会对跨目录读写"请求权限"，
-          // 非交互模式下直接 auto-reject（实测：QA 读需求文档被拒，任务卡在 WORKING）。
-          // 这正是 ADR 0001 说的「文件系统当协作空间会撞上的墙」的一个具体形态。
+          // 产物目录在 agent 的 project 目录之外；opencode 默认会对跨目录读写请求权限，
+          // 非交互模式下 auto-reject（实测：QA 卡在 WORKING 五分钟）
           permission: { external_directory: 'allow', edit: 'allow', bash: 'allow' },
-          mcp: { space: { type: 'local', command: [process.execPath, CLI, 'serve', '--dir', spaceDir, '--token-file', tokenFile], enabled: true, timeout: 60000 } },
+          mcp: { space: { type: 'local', command: [NODE, CLI, 'serve', '--dir', spaceDir, '--token-file', tokenFile], enabled: true, timeout: 60000 } },
         },
         null,
         2,
@@ -91,7 +102,7 @@ function writeRuntimeConfig(runtime, member, dir) {
         '      config:',
         '        serverName: space',
         '        transport: stdio',
-        `        command: ${process.execPath}`,
+        `        command: ${NODE}`,
         '        args:',
         `          - ${CLI}`,
         '          - serve',
@@ -105,16 +116,56 @@ function writeRuntimeConfig(runtime, member, dir) {
   }
 }
 
-function spawnAgent(runtime, member, dir, prompt) {
-  const env = { ...process.env, PATH: `/Users/krisyu/.nvm/versions/node/v26.1.0/bin:${process.env.PATH}` }
+function buildPrompt(member, runtime) {
+  const t = (n) => (runtime === 'opencode' ? `space_space_${n}` : `mcp__space__space_${n}`)
+  const roleDoc = readFileSync(join(HERE, 'roles', `${member}.md`), 'utf8')
+  const isPm = member === 'pm'
+  return `${roleDoc}
+
+---
+# 你在协作空间里的工作方式
+
+你是一个**独立会话**，通过 MCP 工具和中心空间交互。工具名以 ${runtime === 'opencode' ? 'space_space_' : 'mcp__space__space_'} 开头。
+空间根目录：${spaceDir}
+产物目录（你自己不写产物，仅用于读）：${artifactsDir}/
+
+## 启动
+调用 \`${t('attach')}\`，参数 {"constitution_version":1,"capabilities":{"max_block_sec":60}}。
+记下返回的 cursor。
+
+## 主循环（最多 40 轮）
+1. \`${t('wait')}\` {"since_cursor": <上次的 cursor>, "timeout_sec": 60}
+   - reason="timeout" → 继续下一轮
+   - tasks 里有 state=PENDING 的任务 → 取第一个，进入「干活」
+2. 干活（每个任务）：
+   a. \`${t('task_claim')}\` {"task_id": <id>, "lease_sec": 300}
+   b. \`${t('task_transition')}\` {"task_id": <id>, "lease_id": <lease_id>, "to": "WORKING"}
+   c. 读任务 inputs（文件在 ${spaceDir}/<uri>）
+   d. 写交付件到 ${artifactsDir}/<任务 expected.filename>
+   e. 算哈希：shasum -a 256 <文件>
+   f. \`${t('publish')}\` {"uri":"artifacts/${OP}/<文件名>","sha256":<哈希>,"size":<字节>,"media_type":"text/markdown","task_id":<id>}
+   g. 验收类任务（step 以 CP 开头）：\`${t('task_accept')}\` {"task_id": <id>, "cp": "<step>", "verdict": "pass" 或 "hold", "gaps": [...]}
+   h. \`${t('task_transition')}\` {"task_id": <id>, "lease_id": <lease_id>, "to": "DONE", "payload": {"handoff": {"uri":"artifacts/${OP}/<文件名>","sha256":<哈希>,"size":<字节>}, "reason": "<一句话结论>"}}
+3. 回到循环
+
+## 底线
+- 只能认领派给你的任务（to 是你，或 role 是你）；不是你的别碰。
+- 交付件要像真的：有章节、有具体数值/接口签名。
+- 做不了就 transition 到 FAILED 并写 reason。
+- 循环 40 轮没有任务就结束，最后输出一行：AGENT_DONE <完成几个任务>${isPm ? '（PM 请输出 PM_DONE <总结>）' : ''}
+`
+}
+
+function spawnAgent(member, runtime, dir, prompt) {
+  const env = { ...process.env, PATH }
   let cmd
   let args
   if (runtime === 'opencode') {
     cmd = 'opencode'
     args = ['run', '--pure', '-m', OC_MODEL, '--dir', dir, prompt]
   } else {
-    const key = process.env.DEEPSEEK_API_KEY || readFileSync(join(homedir(), '.dsh', '.credentials.yaml'), 'utf8').match(/DEEPSEEK_API_KEY:\s*(\S+)/)?.[1]
-    env.DEEPSEEK_API_KEY = key
+    env.DEEPSEEK_API_KEY =
+      process.env.DEEPSEEK_API_KEY || readFileSync(join(homedir(), '.dsh', '.credentials.yaml'), 'utf8').match(/DEEPSEEK_API_KEY:\s*(\S+)/)?.[1]
     cmd = 'dsh'
     args = ['--profile', 'headless', '--patch', join(dir, 'patch.yml'), prompt]
   }
@@ -125,63 +176,26 @@ function spawnAgent(runtime, member, dir, prompt) {
   child.stdout.on('data', (d) => (out.stdout += d))
   child.stderr.on('data', (d) => (out.stderr += d))
   const logPath = join(spaceDir, `agent-${member}.log`)
-  child.on('close', (code) => {
-    try {
-      writeFileSync(logPath, `# ${member} (${runtime}) exit=${code}\n--- stdout ---\n${out.stdout}\n--- stderr ---\n${out.stderr}`)
-    } catch {}
-  })
-  return { child, out, logPath, done: new Promise((r) => child.on('close', (code) => r({ code, ...out }))) }
+  const done = new Promise((r) =>
+    child.on('close', (code) => {
+      try {
+        writeFileSync(logPath, `# ${member} (${runtime}) exit=${code}\n--- stdout ---\n${out.stdout}\n--- stderr ---\n${out.stderr}`)
+      } catch {}
+      r({ code, ...out })
+    }),
+  )
+  return { child, out, done, logPath }
 }
 
-/** 给真实 agent 的提示词：角色职责 + 空间协议（工具名按 runtime 前缀） */
-function buildPrompt(member, runtime, role) {
-  const t = runtime === 'opencode' ? (n) => `space_space_${n}` : (n) => `mcp__space__space_${n}`
-  const roleDoc = readFileSync(join(HERE, 'roles', `${member}.md`), 'utf8')
-  return `${roleDoc}
-
----
-# 你在协作空间里的工作方式
-
-你是一个**独立会话**，通过 MCP 工具和中心空间交互。工具名以 ${runtime === 'opencode' ? 'space_space_' : 'mcp__space__space_'} 开头。
-空间根目录：${spaceDir}
-产物请写到：${artifactsDir}/  （发布时 uri 用相对路径 artifacts/${OP}/<文件名>，不带反引号）
-
-## 启动
-调用 \`${t('attach')}\`，参数 {"constitution_version":1,"capabilities":{"max_block_sec":60}}。
-记下返回的 cursor。
-
-## 主循环（最多 30 轮；每轮 wait 60 秒，覆盖整个流程约 30 分钟）
-1. \`${t('wait')}\` 参数 {"since_cursor": <上次的 cursor>, "timeout_sec": 60}
-   - reason="timeout" → 继续下一轮
-   - 返回的 tasks 里有 state=PENDING 的任务 → 取第一个，进入「干活」
-2. 干活（对每个任务）：
-   a. \`${t('task_claim')}\` {"task_id": <id>, "lease_sec": 300} → 拿到 lease_id
-   b. \`${t('task_transition')}\` {"task_id": <id>, "lease_id": <lease_id>, "to": "WORKING"}
-   c. 用任务里的 inputs（uri + sha256）读上游交付件：文件在 ${spaceDir}/<uri>
-   d. 按角色职责写交付件到 ${artifactsDir}/<任务 expected.filename>
-   e. 用 shell 算哈希：shasum -a 256 <文件>
-   f. \`${t('publish')}\` {"uri":"artifacts/${OP}/<文件名>","sha256":<哈希>,"size":<字节数>,"media_type":"text/markdown","task_id":<id>}
-   g. 若是验收类任务（step 以 CP 开头）：\`${t('task_accept')}\` {"task_id": <id>, "cp": "<step>", "verdict": "pass" 或 "hold", "gaps": [...], "evidence": {...}}
-   h. \`${t('task_transition')}\` {"task_id": <id>, "lease_id": <lease_id>, "to": "DONE", "payload": {"handoff": {"uri":"artifacts/${OP}/<文件名>", "sha256":<哈希>, "size":<字节数>}, "reason": "<一句话结论>"}}
-3. 回到循环
-
-## 底线
-- 只能认领派给你（to 是你或 role 是你）的任务；不是你的别碰。
-- 交付件要像真的：有章节、有具体数值/接口签名，不要写占位提纲。
-- 做不了就 \`${t('task_transition')}\` 到 FAILED 并写 reason，不要静默卡住。
-- 循环 30 轮没有任务就正常结束，最后输出一行：AGENT_DONE <你完成了几个任务>
-`
-}
-
-// ───────────────────────────────────────────── 脚本扮演的 MCP 成员（pm / human）
-class ScriptedMember {
-  constructor(name) {
-    this.name = name
+/** 脚本扮演的人：等 question 任务，第一次 CP1 打回，其余通过 */
+class Human {
+  constructor() {
     this.nextId = 1
     this.pending = new Map()
+    this.stop = false
   }
   async start() {
-    this.proc = spawn(process.execPath, [CLI, 'serve', '--dir', spaceDir, '--token-file', join(spaceDir, 'tokens', `${this.name}.token`)], { stdio: ['pipe', 'pipe', 'pipe'] })
+    this.proc = spawn(NODE, [CLI, 'serve', '--dir', spaceDir, '--token-file', join(spaceDir, 'tokens', 'human.token')], { stdio: ['pipe', 'pipe', 'pipe'] })
     let buf = ''
     this.proc.stdout.setEncoding('utf8')
     this.proc.stdout.on('data', (c) => {
@@ -205,7 +219,7 @@ class ScriptedMember {
       }
     })
     this.proc.stderr.resume()
-    await this.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: this.name, version: '0' } })
+    await this.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'human', version: '0' } })
     this.notify('notifications/initialized')
     return this
   }
@@ -229,202 +243,116 @@ class ScriptedMember {
     }
     return payload
   }
+  async run() {
+    await this.tool('space_attach', { constitution_version: 1, capabilities: {} })
+    let cursor = 0
+    let rejected = false
+    const deadline = Date.now() + TIMEOUT_MIN * 60_000
+    while (!this.stop && Date.now() < deadline) {
+      let r
+      try {
+        r = await this.tool('space_wait', { since_cursor: cursor, timeout_sec: 10 })
+      } catch {
+        break
+      }
+      cursor = r.cursor
+      for (const t of r.tasks ?? []) {
+        const claim = await this.tool('space_task_claim', { task_id: t.task_id, lease_sec: 120 })
+        // PM 可能把问卷叫 CP1-question / CP1 · 问卷…，只要不是复核轮（CP1-r*）就算首次
+        const stepText = String(t.step ?? '')
+        const isFirstCP1 = /CP1/.test(stepText) && !/CP1-r\d/i.test(stepText) && !rejected
+        const answer = isFirstCP1 ? 'reject：架构选型只给了推荐，目标芯片对该架构的支持情况没写清，无法拍板' : 'approve：可以进入下一步'
+        if (isFirstCP1) rejected = true
+        await this.tool('space_task_transition', { task_id: t.task_id, lease_id: claim.lease_id, to: 'WORKING' })
+        await this.tool('space_task_transition', { task_id: t.task_id, lease_id: claim.lease_id, to: 'DONE', payload: { reason: answer, answer } })
+        console.log(`  [human] 回答 ${t.step}：${answer.slice(0, 18)}…`)
+      }
+    }
+  }
   close() {
+    this.stop = true
     try {
       this.proc.stdin.end()
     } catch {}
   }
 }
 
-const pm = await new ScriptedMember('pm').start()
-const human = await new ScriptedMember('human').start()
-const rawDb = new DatabaseSync(join(spaceDir, 'space.sqlite'))
-const taskRow = (id) => rawDb.prepare('select * from tasks where id = ?').get(id)
+// ───────────────────────────────────────────── 起三个真实会话 + 人
+const dirs = {}
+for (const member of ['pm', 'architect', 'qa']) {
+  dirs[member] = join(spaceDir, `member-${member}`)
+  mkdirSync(dirs[member], { recursive: true })
+  writeRuntimeConfig(RT[member], member, dirs[member])
+}
 
-await pm.tool('space_attach', { constitution_version: 1, capabilities: {} })
-await human.tool('space_attach', { constitution_version: 1, capabilities: {} })
+const human = await new Human().start()
+const humanLoop = human.run().catch((e) => console.error(`[human] 退出：${e.message}`))
 
-// ───────────────────────────────────────────── 起两个真实 agent
-const archDir = join(spaceDir, 'member-architect')
-const qaDir = join(spaceDir, 'member-qa')
-mkdirSync(archDir, { recursive: true })
-mkdirSync(qaDir, { recursive: true })
-writeRuntimeConfig(RUNTIME_ARCH, 'architect', archDir)
-writeRuntimeConfig(RUNTIME_QA, 'qa', qaDir)
-
-console.log(`architect → ${RUNTIME_ARCH}，qa → ${RUNTIME_QA}（两个真实会话并发）\n`)
 const t0 = Date.now()
-const architect = spawnAgent(RUNTIME_ARCH, 'architect', archDir, buildPrompt('architect', RUNTIME_ARCH, 'architect'))
-const qa = spawnAgent(RUNTIME_QA, 'qa', qaDir, buildPrompt('qa', RUNTIME_QA, 'qa'))
-
-// 人：脚本循环回答 question 任务（第一次 CP1 打回，其余通过）
-let cp1Seen = false
-let humanStop = false
-const humanLoop = (async () => {
-  let cursor = 0
-  const humanDeadline = Date.now() + 45 * 60_000
-  while (!humanStop && Date.now() < humanDeadline) {
-    const r = await human.tool('space_wait', { since_cursor: cursor, timeout_sec: 10 })
-    cursor = r.cursor
-    const pending = r.tasks?.filter((t) => t.state === 'PENDING') ?? []
-    for (const t of pending) {
-      const claim = await human.tool('space_task_claim', { task_id: t.task_id, lease_sec: 120 })
-      const isCP1 = /CP1/.test(t.step ?? '') && !cp1Seen
-      const answer = isCP1
-        ? 'reject：架构选型只给了推荐，目标芯片对该架构的支持情况没写清，无法拍板'
-        : 'approve：可以进入下一步'
-      if (isCP1) cp1Seen = true
-      // 状态机是 CLAIMED → WORKING → DONE，人也不能跳步
-      await human.tool('space_task_transition', { task_id: t.task_id, lease_id: claim.lease_id, to: 'WORKING' })
-      await human.tool('space_task_transition', {
-        task_id: t.task_id,
-        lease_id: claim.lease_id,
-        to: 'DONE',
-        payload: { reason: answer, answer },
-      })
-      console.log(`  [human] 回答 ${t.step}：${answer.slice(0, 20)}…`)
-    }
-  }
-})()
-
-// ───────────────────────────────────────────── PM：派活 + 收活
-async function createTask(args) {
-  const r = await pm.tool('space_task_create', { op: OP, ...args })
-  return r.task_id
-}
-async function waitDone(taskId, { timeoutMs = 420000, label = '' } = {}) {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    const row = taskRow(taskId)
-    if (row?.state === 'DONE') return row
-    if (row?.state === 'FAILED') throw new Error(`${label || taskId} FAILED: ${row.reason}`)
-    await sleep(500)
-  }
-  throw new Error(`${label || taskId} 超时未完成（state=${taskRow(taskId)?.state}）`)
-}
-async function question(step, text) {
-  const id = await createTask({ type: 'question', to: 'human', step, expected: { question: text } })
-  return waitDone(id, { label: `question ${step}` })
+const agents = {}
+for (const member of ['pm', 'architect', 'qa']) {
+  agents[member] = spawnAgent(member, RT[member], dirs[member], buildPrompt(member, RT[member]))
 }
 
-try {
-  // 1.1 需求分析
-  const t11 = await createTask({
-    type: 'assign',
-    to: 'architect',
-    step: '1.1',
-    inputs: [{ uri: `artifacts/${OP}-需求输入.md`, sha256: sha256(readFileSync(join(spaceDir, 'artifacts', `${OP}-需求输入.md`))) }],
-    expected: { filename: '1.1-需求分析.md', deliverable: '需求文档（含代码架构推荐）' },
-  })
-  await waitDone(t11, { label: '1.1' })
-  console.log('  [pm] 1.1 需求分析 完成')
+// PM 是总控：它结束（或超时）就收尾
+const pmResult = await Promise.race([
+  agents.pm.done,
+  sleep(TIMEOUT_MIN * 60_000).then(() => ({ code: 'TIMEOUT', stdout: agents.pm.out.stdout })),
+])
+const elapsed = ((Date.now() - t0) / 1000).toFixed(0)
 
-  // CP1（QA 验收 → 人确认 → 打回 → revision）
-  const cp1 = await createTask({ type: 'assign', to: 'qa', step: 'CP1', refs: [t11], inputs: [taskRow(t11).handoff_uri ? { uri: taskRow(t11).handoff_uri, sha256: taskRow(t11).handoff_sha } : {}], expected: { filename: 'CP1-需求验收报告.md' } })
-  await waitDone(cp1, { label: 'CP1' })
-  console.log('  [pm] CP1 QA 验收完成')
-  const q1 = await question('CP1', '需求文档是否可拍板？架构选型是否已给出目标芯片支持情况？')
-  check('CP1 问卷打到人（WAITING_INPUT 语义）', /reject/.test(q1.reason ?? ''), (q1.reason ?? '').slice(0, 40))
+human.close()
+for (const m of ['architect', 'qa']) agents[m].child.kill('SIGKILL')
+// 人的循环是「一直等」，关掉 stdin 后 in-flight 的 wait 不会返回，所以只等一小会儿
+await Promise.race([humanLoop, sleep(2000)])
 
-  // 打回 → revision（R2：slot 由服务端按 cp 查表）
-  const rev = await createTask({ type: 'revision', refs: [t11], cp: 'CP1', to: 'architect', step: '1.1-r2', expected: { filename: '1.1-需求分析-v2.md', fix: q1.reason } })
-  await waitDone(rev, { label: 'revision 1.1' })
-  console.log('  [pm] revision 任务完成（architect 已按意见修订）')
+// ───────────────────────────────────────────── 验收（只看库与磁盘）
+const rawDb = new DatabaseSync(join(spaceDir, 'space.sqlite'))
+const tasks = rawDb.prepare('select * from tasks order by created_at').all()
+const files = existsSync(artifactsDir) ? readdirSync(artifactsDir).filter((f) => f.endsWith('.md')) : []
+const substantive = files.filter((f) => statSync(join(artifactsDir, f)).size > 1024)
+const sizes = substantive.map((f) => `${f}=${(statSync(join(artifactsDir, f)).size / 1024).toFixed(0)}KB`)
 
-  const cp1b = await createTask({ type: 'assign', to: 'qa', step: 'CP1-r2', refs: [rev], inputs: [{ uri: taskRow(rev).handoff_uri, sha256: taskRow(rev).handoff_sha }], expected: { filename: 'CP1-需求验收报告-r2.md' } })
-  await waitDone(cp1b, { label: 'CP1-r2' })
-  const q1b = await question('CP1-r2', '修订后的需求文档是否可拍板？')
-  check('CP1 第二轮人工确认通过', /approve/.test(q1b.reason ?? ''), (q1b.reason ?? '').slice(0, 40))
+console.log(`\nPM 会话结束（exit=${pmResult.code}），总用时 ${elapsed}s\n`)
 
-  // 2.1 测试方案 → CP2.1
-  const t21 = await createTask({ type: 'assign', to: 'architect', step: '2.1', inputs: [{ uri: taskRow(rev).handoff_uri, sha256: taskRow(rev).handoff_sha }], expected: { filename: '2.1-测试方案设计.md' } })
-  await waitDone(t21, { label: '2.1' })
-  console.log('  [pm] 2.1 测试方案 完成')
-  const cp21 = await createTask({ type: 'assign', to: 'qa', step: 'CP2.1', refs: [t21], inputs: [{ uri: taskRow(t21).handoff_uri, sha256: taskRow(t21).handoff_sha }], expected: { filename: 'CP2.1-测试方案验收报告.md' } })
-  await waitDone(cp21, { label: 'CP2.1' })
-  console.log('  [pm] CP2.1 完成')
+check('PM 是真实会话并自行完成编排（未超时）', pmResult.code === 0 && /PM_DONE/.test(pmResult.stdout), String(pmResult.code))
+check('交付件数量足够（≥6 份 1KB 以上的文档）', substantive.length >= 6, `${substantive.length} 份: ${sizes.join(' ')}`)
 
-  // 2.2 开发方案 → CP2.2 → 人确认
-  const t22 = await createTask({ type: 'assign', to: 'architect', step: '2.2', inputs: [{ uri: taskRow(rev).handoff_uri, sha256: taskRow(rev).handoff_sha }], expected: { filename: '2.2-开发方案设计.md' } })
-  await waitDone(t22, { label: '2.2' })
-  console.log('  [pm] 2.2 开发方案 完成')
-  const cp22 = await createTask({ type: 'assign', to: 'qa', step: 'CP2.2', refs: [t22], inputs: [{ uri: taskRow(t22).handoff_uri, sha256: taskRow(t22).handoff_sha }], expected: { filename: 'CP2.2-方案验收报告.md' } })
-  await waitDone(cp22, { label: 'CP2.2' })
-  const q22 = await question('CP2.2', '开发方案是否可进入编码？')
-  check('CP2.2 问卷打到人并获批', /approve/.test(q22.reason ?? ''), (q22.reason ?? '').slice(0, 40))
+const steps = tasks.map((t) => t.step)
+check(
+  'PM 派出了完整流程（1.1/CP1/2.1/CP2.1/2.2/CP2.2）',
+  ['1.1', 'CP1', '2.1', 'CP2.1', '2.2', 'CP2.2'].every((s) => steps.some((x) => x && x.startsWith(s))),
+  steps.join(','),
+)
+check('PM 建了 revision 任务（人打回 → 返工）', tasks.some((t) => t.type === 'revision'))
+check('PM 建了人工确认任务（question ≥2）', tasks.filter((t) => t.type === 'question').length >= 2, `${tasks.filter((t) => t.type === 'question').length} 个`)
 
-  console.log('\n设计段（1.1 → CP2.2）全流程跑完，等待两个 agent 收尾…\n')
-} catch (err) {
-  check('工作流推进无异常', false, err.message)
-} finally {
-  // 让 agent 自然结束（它们的循环会在无任务时退出）
-  const waited = await Promise.race([Promise.all([architect.done, qa.done]), sleep(120000).then(() => 'timeout')])
-  if (waited === 'timeout') {
-    architect.child.kill('SIGKILL')
-    qa.child.kill('SIGKILL')
-  }
-  humanStop = true
-  human.close()
-  await humanLoop.catch(() => {})
+const unfinished = tasks.filter((t) => t.state !== 'DONE')
+check('所有任务到达 DONE', unfinished.length === 0, unfinished.map((t) => `${t.step}:${t.state}`).join(',') || 'ok')
 
-  const secs = ((Date.now() - t0) / 1000).toFixed(1)
-  const archOut = architect.out
-  const qaOut = qa.out
+const slot = rawDb.prepare("select round from slots where op = ? and slot = 'design'").get(OP)
+check('R2 打回计入 design 槽且没清零', (slot?.round ?? 0) >= 1, `round=${slot?.round}`)
 
-  const tasks = rawDb.prepare('select * from tasks order by created_at').all()
-  const docs = ['1.1-需求分析.md', '1.1-需求分析-v2.md', '2.1-测试方案设计.md', '2.2-开发方案设计.md']
-  const present = docs.filter((f) => existsSync(join(artifactsDir, f)))
-  const sizes = present.map((f) => `${f}:${statSync(join(artifactsDir, f)).size}B`)
+const artifacts = rawDb.prepare('select uri, sha256 from artifacts').all()
+const chainOk =
+  artifacts.length > 0 && artifacts.every((a) => existsSync(join(spaceDir, a.uri)) && sha256(readFileSync(join(spaceDir, a.uri))) === a.sha256)
+check('产物登记与磁盘一致（sha256 全对）', chainOk, `${artifacts.length} 个产物`)
 
-  console.log(`\n两个真实会话用时 ${secs}s（architect exit=${architect.out.code ?? '?'}, qa exit=${qa.out.code ?? '?'}）\n`)
+const verifyOut = spaceCli(['verify', '--dir', spaceDir])
+check('投影 == 事件归约', /projection OK/.test(verifyOut), verifyOut.trim())
 
-  check('architect 交付了需求文档（真实文件）', present.includes('1.1-需求分析.md'), sizes.join(' '))
-  check('architect 按打回意见产出了修订版', present.includes('1.1-需求分析-v2.md'))
-  check('architect 交付了测试方案', present.includes('2.1-测试方案设计.md'))
-  check('architect 交付了开发方案', present.includes('2.2-开发方案设计.md'))
+const trace = spaceCli(['trace', '--dir', spaceDir, '--limit', '500']).trim().split('\n')
+check('事件流可作 trace', trace.length >= 30, `${trace.length} 条事件`)
 
-  const doneCount = tasks.filter((t) => t.state === 'DONE').length
-  check('任务全部到达 DONE', doneCount === tasks.length && tasks.length >= 10, `${doneCount}/${tasks.length}`)
+console.log('\n--- PM 最后 20 行 ---')
+console.log(pmResult.stdout.split('\n').slice(-20).join('\n'))
+console.log('\n--- trace 尾部 ---')
+console.log(trace.slice(-10).join('\n'))
+console.log(`\n日志：${spaceDir}/agent-*.log`)
+if (!KEEP) console.log(`space：${spaceDir}（加 --keep 保留）`)
 
-  const revision = tasks.find((t) => t.type === 'revision')
-  const slot = rawDb.prepare("select round from slots where op = ? and slot = 'design'").get(OP)
-  check('R2 轮次按服务端归属计数（CP1 打回记进 design 槽）', Boolean(revision) && slot?.round === 1, `round=${slot?.round}`)
-
-  const handoffs = tasks.filter((t) => t.handoff_uri).length
-  check('每个交付类任务都带 handoff', handoffs >= 6, `${handoffs} 个`)
-
-  // handoff 交链：登记 sha 必须等于文件真值
-  const artifacts = rawDb.prepare('select uri, sha256 from artifacts').all()
-  const chainOk = artifacts.every((a) => {
-    const f = join(spaceDir, a.uri)
-    if (!existsSync(f)) return false
-    return sha256(readFileSync(f)) === a.sha256
-  })
-  check('产物登记与磁盘内容一致（sha256 全对）', chainOk, `${artifacts.length} 个产物`)
-
-  const verifyOut = spaceCli(['verify', '--dir', spaceDir])
-  check('投影 == 事件归约（可重放）', /projection OK/.test(verifyOut), verifyOut.trim())
-
-  const trace = spaceCli(['trace', '--dir', spaceDir, '--limit', '400']).trim().split('\n')
-  const kinds = new Set(trace.map((l) => l.trim().split(/\s+/)[2]).filter(Boolean))
-  check('事件流覆盖 创建/认领/迁移/发布/人答', ['task.created', 'task.claimed', 'task.transitioned', 'artifact.published', 'handoff.written'].every((k) => kinds.has(k)), `${trace.length} 条事件`)
-
-  console.log('\n--- qa 最后 25 行（诊断卡点）---')
-  console.log(qa.out.stdout.split('\n').slice(-25).join('\n'))
-  console.log('\n--- architect 最后 12 行 ---')
-  console.log(architect.out.stdout.split('\n').slice(-12).join('\n'))
-  console.log(`\n日志：${architect.logPath}\n      ${qa.logPath}`)
-
-  console.log('\n--- trace 尾部 ---')
-  console.log(trace.slice(-12).join('\n'))
-  if (!KEEP) console.log(`\nspace 目录：${spaceDir}（加 --keep 保留）`)
-
-  rawDb.close()
-  pm.close()
-  human.close()
-
-  const failed = results.filter((r) => !r.ok)
-  console.log(`\n${results.length - failed.length}/${results.length} passed`)
-  if (failed.length) for (const f of failed) console.log(`  - ${f.name}${f.detail ? `: ${f.detail}` : ''}`)
-  process.exit(failed.length ? 1 : 0)
-}
+rawDb.close()
+const failed = results.filter((r) => !r.ok)
+console.log(`\n${results.length - failed.length}/${results.length} passed`)
+for (const f of failed) console.log(`  - ${f.name}${f.detail ? `: ${f.detail}` : ''}`)
+process.exit(failed.length ? 1 : 0)

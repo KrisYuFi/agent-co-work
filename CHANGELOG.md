@@ -2,6 +2,30 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。当前处于**设计阶段**，版本号用于标记设计与协议的里程碑。
 
+## [0.4.1] - 2026-10-28
+
+**PM 换成真实会话：三个真实 agent 并发跑完设计段，10/10。**
+
+### Changed
+
+- `examples/ops-direct-invoke/roles/pm.md` — PM 角色定义（流程表 + 派活/等活/判定/打回/回数上限）
+- `examples/ops-direct-invoke/run-design.mjs` — PM 不再由脚本代劳，改为真实会话；脚本只负责搭空间、启进程、扮演人、验收
+- `space_task_accept` 的 verdict 落到任务行（`reason`），`task_list` 支持按 `step` 过滤 —— 编排方不必去翻事件流
+
+### Fixed
+
+- **`verdict=pass` 不能带阻断级 gap**：实跑里 QA 判 pass 却写下「需求基线与文档冲突」，
+  靠 PM 读 gaps 才补救。现由 server 拒绝（`blocking:true` / `severity:'blocker'`），并加回归断言
+
+### 实跑结果（pm=dsh, architect=dsh, qa=opencode，human=脚本）
+
+- 14 个任务全 DONE，10 份交付件约 200KB，87 条事件，`space verify` 通过
+- CP1 两轮打回（QA 判 gap 一次、human reject 一次），`slots.design.round = 2`
+- PM 自主加了一步 `0.0-requirement-question` 找人对需求基线；CP2.1 hold 后自行打回 2.1
+- 事故：architect 首版把 add 写成 Softmax，QA 判 pass 但 gap 里点了问题，PM 据此纠重 —— 见 README
+
+---
+
 ## [0.4.0] - 2026-10-28
 
 **第一次用真实 agent 跑通 ops-direct-invoke 的「需求 → 设计 → 设计 review」段。**

@@ -46,9 +46,10 @@ node examples/ops-direct-invoke/run-design.mjs --architect dsh   # 默认 archit
 
 ---
 
-## 第一次实跑结果（2026-10-28）
+## 实跑一：PM 是脚本（2026-10-28）
 
 配置：`architect = dsh`、`qa = opencode`，两个**真实会话**并发；PM 与 human 由脚本按同一套 MCP 工具驱动。
+（这一轮的意义是先把 worker 侧和 CP/回退机制跑通，PM 的判定逻辑由脚本硬编码。）
 
 链路（68 条事件 / 11 个任务 / 8 份交付件）：
 
@@ -75,7 +76,41 @@ node examples/ops-direct-invoke/run-design.mjs --architect dsh   # 默认 archit
 值得记的细节：v2 需求文档在开头就写明了「修订依据 = CP1 退回意见」+ 原任务 id + 上游输入 sha256。
 返工上下文是**落盘可追溯的**，不依赖「复用原会话」——这正是 ADR 0004 想解决的那个「会话一销毁就断链」。
 
-## 这次跑出来的四个问题
+## 实跑二：PM 换成真实会话（2026-10-28）★
+
+配置：`pm = dsh`、`architect = dsh`、`qa = opencode`，**三个真实会话并发**；只有 human 是脚本。
+
+结果 **10/10 通过**，用时 1555s：
+
+| 项 | 结果 |
+|---|---|
+| PM 自主编排 | exit=0，最后输出 `PM_DONE 需求→设计→设计 review 全流程走完…` |
+| 任务 | 14 个，全部 DONE |
+| 交付件 | 10 份、约 200 KB（需求 v1/v2/v3、测试方案、开发方案、3 份 CP 报告、CP2.1/CP2.2 报告） |
+| 事件 | 87 条，`space verify` 通过 |
+| 回退 | CP1 两轮打回（一次 QA 判 gap、一次 human reject），`slots.design.round = 2` |
+| 人机确认 | 4 次 question 任务，人答了 3 次 approve + 1 次 reject |
+
+**PM 做了我没写进脚本的事**：它自己加了一步 `0.0-requirement-question`，先找人对需求基线；在 QA 判 gap 后自己建 revision；在 CP2.1 hold 后按 gap 清单打回 2.1 而不是往下走。
+这说明「编排逻辑」交给模型 + 几张表，是能跑通的。
+
+### 一个必须记下来的事故：QA 判了 pass，却写着阻断级问题
+
+第一版需求文档被 architect 写成了 **Softmax**（算子错，输入明明是 add）。QA 的 CP1 **判了 `pass`**，
+但在 `gaps` 里写了：
+
+```
+G1: 需求基线文件 add-需求输入.md 内容为 add 算子，与 Softmax 需求冲突
+```
+
+**是 PM 读到这条 gap 才建了 revision 把文档纠回 add 的**。也就是说：一次严重的错误，靠编排方的细心补救回来了。
+
+已改为机制（本仓 `src/space/service.mjs`）：`verdict=pass` **不能带阻断级 gap**（`blocking:true` / `severity:'blocker'`），
+server 直接拒绝——要么判 `hold` 打回，要么把它降级成「可带下的细化项」。这条有回归断言。
+
+> 这也是本项目反复出现的那个主题的一个新形态：**判断口径可以留在人/宪法里，但「判定与内容不能自相矛盾」必须由接口拦**。
+
+## 上一次跑出来的四个问题
 
 1. **opencode 的目录权限挡住了跨目录读**（`permission.external_directory`）。产物目录在 agent 的 project 目录之外时，
    非交互模式直接 auto-reject，任务卡在 WORKING 长达 5 分钟。这是「文件系统当协作空间」会撞的第一堵墙。
@@ -88,6 +123,8 @@ node examples/ops-direct-invoke/run-design.mjs --architect dsh   # 默认 archit
 
 ## 下一步
 
-- PM 换成真实会话（现在是脚本），并把 `hold` → revision 的分支做进去
-- 把 `state.json` 的等价视图做出来（现在要用 `space_state_get` 自己拼）
-- 跨机器：这一步必须换成中心化 hub + HTTP（当前仍是同机共享 sqlite）
+- **跨机器**：必须换成中心化 hub + HTTP（当前仍是同机共享 sqlite + 三个 stdio 子进程）
+- `state.json` 的等价视图（现在要用 `space_state_get` 自己拼）
+- 编排漂移观测：PM 自行加了 `0.0` 步，说明「流程表」目前是提示词里的约定。应该做成可校验的流程定义
+  （步骤编号集合 + 允许的下一跳），否则每个 PM 会话都可能漂出不同形状
+- 把 human 换成真人在 GUI 里答（脚本扮演的人只是验证机制）

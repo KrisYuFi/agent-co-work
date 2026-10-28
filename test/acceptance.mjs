@@ -311,6 +311,13 @@ try {
   } catch (err) {
     expectError('human 放宽但证据不全被拒（EVIDENCE_INSUFFICIENT）', err, 'EVIDENCE_INSUFFICIENT')
   }
+  try {
+    await QA.tool('space_task_accept', { task_id: t3.task_id, verdict: 'pass', cp: 'CP3', gaps: [{ id: 'G1', issue: '需求与文档冲突', blocking: true }] })
+    check('pass 带阻断级 gap 被拒', false, 'no error raised')
+  } catch (err) {
+    expectError('pass 不能带阻断级 gap（EVIDENCE_INSUFFICIENT）', err, 'EVIDENCE_INSUFFICIENT')
+  }
+
   const relaxed = await H.tool('space_task_accept', { task_id: t3.task_id, verdict: 'relax', cp: 'CP3', evidence })
   check('human 带齐证据可放宽（记 cp.judged）', relaxed.relaxed === true && rawDb.prepare("select count(*) c from events where kind='cp.judged'").get().c >= 1)
 
