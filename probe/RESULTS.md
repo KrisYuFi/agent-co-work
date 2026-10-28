@@ -101,6 +101,26 @@ DSH 的 MCP 桥在标准 `initialize` 之前先发一个 `server/discover`（id 
 
 ---
 
+## 追加探针：跨机器所需的 remote MCP（2026-10-28）
+
+中心化 hub 要求成员**通过网络**接入，而阶段 1 只测过 stdio。补测：
+
+| # | 假设 | opencode 1.18.23 | dsh 0.1.2-rc.1 |
+|---|---|---|---|
+| P4 | 支持 **MCP over Streamable HTTP**（remote 接入） | ✅ `type:"remote"` + `url` + `headers` | ✅ `transport: streamable-http` + `url` + `headers` |
+| P5 | 带 **Bearer 鉴权**可用 | ✅ `headers.Authorization` | ✅ `headers.Authorization` |
+| P6 | 服务端只回 JSON、不开 SSE 流也能用 | ✅ 会用 `GET` 开推送流，但 405 也能忍 | ✅ 不依赖推送流 |
+
+实测细节（对 `probe/mcp/http-server.mjs`，一个 150 行的零依赖服务器）：
+
+- **没有触发 OAuth**：只要服务器回 200（不是 401），opencode 不会走它的 OAuth 客户端注册流程。101 时才会。
+- **opencode 会额外开一条 SSE**：`initialize` → `notifications/initialized` → `GET /mcp (accept: text/event-stream)`。
+  探针回 405（规范允许声明「不支持服务端推送」），它照常工作——**但生产 hub 若要用进度通知/服务端事件，就得实现这条流**。
+- **DSH 走 HTTP 时同样先发 `server/discover`**（`-32601` 后回落到标准 `initialize`）。与 stdio 的差别：**这次没有重启进程**（本来就没有进程）。
+- 两边都发了 `notifications/cancelled`，说明取消语义在 HTTP 传输下也是通的。
+
+**结论**：中心化 hub 的接入路径可用，不需要 stdio 桥。`wait` 用「POST 长轮询」即可，SSE 只在要服务端主动通知时才需要。
+
 ## 未测 / 下一步
 
 | # | 项 | 何时 |

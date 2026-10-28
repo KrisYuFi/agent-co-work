@@ -18,6 +18,7 @@
 | `mcp/server.mjs` | **零依赖** stdio MCP 服务器。工具：`probe_ping` / `probe_block(seconds)` / `probe_block_progress(seconds, intervalMs)`。把每个请求、每次调用起止、每条 progress 通知写进 JSONL 日志——**这是判决的客观依据**，不是客户端的一面之词 |
 | `mcp/smoke-client.mjs` | 本地自检客户端。先证明服务器本身是对的，否则 runtime 上的失败分不清是「服务器坏了」还是「runtime 不支持」 |
 | `run.mjs` | 一个 `(scenario, runtime)` = 一次运行。生成临时配置（**不碰用户全局配置**）、计时、读回服务器日志、写 `results/raw/*.json` |
+| `mcp/http-server.mjs` | **最小 MCP over Streamable HTTP** 服务器（零依赖）。用于验证 opencode remote / DSH streamable-http 能否接入——中心化 hub 的前提 |
 | `results/raw/<tag>.json` | 每次运行的原始记录，含判决、wall time、工具是否真的跑完、服务器侧阻塞时长 |
 | `results/raw/<tag>.server.jsonl` | 对应的**服务器侧原始日志**（判决证据），随记录入库 |
 | `work/` | 每次运行的工作目录（配置 + 服务器日志），可随时删 |
