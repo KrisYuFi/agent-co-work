@@ -170,6 +170,8 @@
 - **`space connect`** —— 成员侧网关：启动不连空间，提供 `space_join({url, token})` / `space_leave()`，
   把 `space_*` 透传给 hub 并注入 bearer
 - **`space init --members pm:pm,architect:architect,qa:qa,me:human:human`** —— 一条命令建空间 + 签发全部具名 token（0600）
+- **多空间（ADR 0012）**：一个会话可同时加入多个空间，用别名区分；hub 工具在网关层多一个可选 `space` 参数，
+  未指定且多空间时拒绝（`AMBIGUOUS_SPACE`）而不是猜
 - 身份模型不变：token ↔ 成员名 + 角色，agent 靠人给的 token 入场，`space_attach` 回显身份，**不能自封**
 - 已知代价（写进 ADR 0011）：token 进提示词会进会话历史；上下文压缩后需重新给；凭证库作为可选增强保留
 

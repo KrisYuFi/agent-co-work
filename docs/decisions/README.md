@@ -19,6 +19,7 @@
 | [0009](0009-verification-must-be-mutation-tested.md) | 验收必须做变异测试：全绿不等于完成 | 已接受 | 2026-10-28 |
 | [0010](0010-lease-budget-and-active-renewal.md) | 租约默认 900s + 「活跃即心跳」：任何工具调用顺延持有租约 | 已接受 | 2026-10-28 |
 | [0011](0011-gateway-connect-and-runtime-join.md) | 入场改为「网关 `space connect` + 运行时 `space_join`」 | 已接受（待实现） | 2026-10-28 |
+| [0012](0012-multi-space-alias-param.md) | 多空间：别名 + 工具带可选 `space` 参数，歧义时拒绝猜测 | 已接受（待实现） | 2026-10-28 |
 
 ## 模板
 

@@ -11,6 +11,7 @@
 |---|---|---|
 | 2026-10-28 | 阶段 1 技术探针（[`probe/RESULTS.md`](../../probe/RESULTS.md) · [ADR 0005](../decisions/0005-wait-bounded-by-client-tool-timeout.md)） | §6.2 补 `wait` 时长受客户端工具调用超时约束（默认 20s、`max_block_sec` clamp、超时为正常返回、进度通知仅作优化）；§6.3 待实测项结案；§7 `space_attach`/`space_wait` 参数与返回值；§13 未定项 5/6 结案 |
 | 2026-10-28 | 阶段 2 原型实现（[ADR 0006](../decisions/0006-node-sqlite-per-member-stdio.md) · [ADR 0007](../decisions/0007-token-issue-and-revoke.md)） | §1.2 注明实现拓扑偏离（N 进程 + 单库）；§3.2 补 `message.sent` / `task.requeued` / `token.revoked`；§7 `space_attach` 增加 `cursor` 与 `constitution_version`；§13 未定项 3 结案 |
+| 2026-10-28 | 多空间（[ADR 0012](../decisions/0012-multi-space-alias-param.md)） | §7.2 `space_join` 增加 `space` 别名、新增 `space_spaces`；hub 工具在网关层多一个可选 `space` 入参；省略且多空间时拒绝（`AMBIGUOUS_SPACE`） |
 | 2026-10-28 | 入场方式改为运行时 join（[ADR 0011](../decisions/0011-gateway-connect-and-runtime-join.md)） | §2.2 补身份交付方式（token ↔ 成员名，agent 不能自封）；§7.2 新增网关侧工具 `space_join`/`space_leave`（不属于 hub） |
 | 2026-10-28 | 多机实跑发现租约过短（[ADR 0010](../decisions/0010-lease-budget-and-active-renewal.md)） | §4.2/§6.2/§12 默认租约 300s→900s；新增「活跃即心跳」：任何工具调用顺延持有租约；过期只由第三方操作触发扫描 |
 | 2026-10-28 | 独立 review 打回后的修复（[ADR 0008](../decisions/0008-reclaim-semantics-and-mechanism-integrity.md)） | §2.2 标注路径级 ACL 未实现；§2.3 attach 成为硬前置；§4.2 补中断态出边与回收释放租约、标注 `REJECTED`/`EXPIRED` 缺口；§5 R2/R3 改为服务端确定归属、R4/R5 标注未实现；§7 按实现重写接口表（16 个工具）；§11 补 4 个真实错误码；§12 说明 claims 语义与资源无回收 |
@@ -389,8 +390,16 @@ server 派活给 dev-hw
 
 | tool | 入参 | 返回 | 语义 |
 |---|---|---|---|
-| `space_join` | `url`（hub 的 `/mcp` 地址）, `token` | `{ok, hub}` | 连接到该空间；此后上表所有工具可用 |
-| `space_leave` | — | `{ok}` | 断开，回到未加入状态 |
+| `space_join` | `space`（本会话内的别名）, `url`（hub 的 `/mcp` 地址）, `token` | `{ok, space, hub}` | 连接到该空间；此后上表所有工具可用 |
+| `space_leave` | `space` | `{ok}` | 断开该空间 |
+| `space_spaces` | — | `[{space, hub}]` | 当前已加入的空间 |
+
+**多空间（ADR 0012）**：一个会话可以同时加入多个空间，空间以**别名**区分（别名由加入方起，不要求与 hub 库名一致）。
+因此上表 16 个 hub 工具在网关层都多一个**可选**入参 `space`：
+
+- 省略且只加入了一个空间 → 用它
+- 省略且加入了多个 → 拒绝（`AMBIGUOUS_SPACE`），**不做猜测**——猜错会把消息发进错误的群体
+- 每个空间要**各自** `space_attach` 报到；身份也是每个空间一份 token（你可以在 A 空间是 architect、B 空间是 reviewer）
 
 为什么需要它：**MCP 工具集在会话启动时就固定了**，会话中途无法动态挂上一个新的 MCP server。
 所以「在提示词里说一句就连上某个空间」的前提，是启动时已经有一个**能收参数的连接器**在等着。
@@ -473,6 +482,8 @@ A2A 是**点对点**的（Client↔Server，无中央 broker）；房间/成员/
 | `TOKEN_INVALID` / `TOKEN_REVOKED` | 身份无效 / 已吊销（过期走同一路径） |
 | `NOT_MEMBER` | 收件人不是空间成员（`space_msg_send` 的 to 校验） |
 | `NOT_ATTACHED` | 未 `space_attach` 就调用其它工具 |
+| `NOT_JOINED` | 网关未加入任何空间就调用 hub 工具 |
+| `AMBIGUOUS_SPACE` | 已加入多个空间但调用未指定 `space`（**拒绝猜测**） |
 | `CONSTITUTION_OUTDATED` | 遵守的宪法版本过旧，须先升级 |
 | `FORBIDDEN_ROLE` | 角色无权执行该操作（如非 human 放宽硬门槛） |
 | `TASK_NOT_FOUND` | 任务不存在 |
