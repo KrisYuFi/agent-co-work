@@ -14,6 +14,7 @@
 
 import { spawn, execFileSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { tmpdir, homedir } from 'node:os'
 import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -32,7 +33,10 @@ function argValue(name, fallback) {
 const TIMEOUT_SEC = argValue('--timeout-sec', 300)
 const OC_MODEL = process.env.PROBE_OPENCODE_MODEL || 'deepseek/deepseek-v4-pro'
 
-const HASH = 'a3f1c9d27b4e6f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708'
+const ARTIFACT_REL = 'artifacts/add_kernel.cu'
+const ARTIFACT_BODY = Buffer.from('// add kernel\n__global__ void add(float* a, float* b, float* c, int n) {}\n')
+const HASH = createHash('sha256').update(ARTIFACT_BODY).digest('hex')
+const SIZE = ARTIFACT_BODY.length
 
 const sha = () => HASH
 const results = []
@@ -57,6 +61,7 @@ spaceCli(['init', '--dir', spaceDir])
 mkdirSync(join(spaceDir, 'tokens'), { recursive: true })
 mkdirSync(join(spaceDir, 'artifacts'), { recursive: true })
 writeFileSync(join(spaceDir, 'artifacts', 'design.md'), '# add 算子设计\n\nTiling: 128\n')
+writeFileSync(join(spaceDir, ARTIFACT_REL), ARTIFACT_BODY)
 
 const devToken = spaceCli(['token', 'issue', '--dir', spaceDir, '--member', 'dev-code', '--role', 'developer'])
 const pmToken = spaceCli(['token', 'issue', '--dir', spaceDir, '--member', 'pm', '--role', 'pm'])
@@ -115,13 +120,13 @@ const devPrompt = `你是一个协作空间里的开发成员 dev-code。严格�
 第 1 步，调用工具 space_space_attach，参数：{"constitution_version":1,"capabilities":{"max_block_sec":20}}
 
 第 2 步，最多循环 6 次（keep calling until told to stop）：
-  调用工具 space_space_wait，参数 {"since_cursor": <第一次用 0，之后用上一次返回的 cursor>, "timeout_sec": 20}
+  调用工具 space_space_wait，参数 {"since_cursor": <第一次用第 1 步 attach 返回的 cursor，之后用上一次返回的 cursor>, "timeout_sec": 20}
   - 如果返回里 reason 是 "timeout"：继续下一轮循环
   - 如果返回里 tasks 中有 state 为 "PENDING" 的任务，记下 task_id，然后依次：
       a) space_space_task_claim {"task_id": <task_id>, "lease_sec": 120}
       b) space_space_task_transition {"task_id": <task_id>, "lease_id": <lease_id>, "to": "WORKING"}
-      c) space_space_publish {"uri":"artifacts/add_kernel.cu","sha256":"${sha()}","size":1234,"media_type":"text/x-cuda","task_id":<task_id>}
-      d) space_space_task_transition {"task_id": <task_id>, "lease_id": <lease_id>, "to": "DONE", "payload": {"handoff": {"uri":"artifacts/add_kernel.cu","sha256":"${sha()}"}, "reason": "kernel implemented"}}
+      c) space_space_publish {"uri":"${ARTIFACT_REL}","sha256":"${HASH}","size":${SIZE},"media_type":"text/x-cuda","task_id":<task_id>}
+      d) space_space_task_transition {"task_id": <task_id>, "lease_id": <lease_id>, "to": "DONE", "payload": {"handoff": {"uri":"${ARTIFACT_REL}","sha256":"${HASH}","size":${SIZE}}, "reason": "kernel implemented"}}
       e) 结束循环，最后一行只输出：TASK_DONE <task_id>
 
 如果 6 次全是 timeout，最后一行只输出：NO_TASK`
@@ -163,18 +168,18 @@ const dev = run('opencode', ['run', '--pure', '-m', OC_MODEL, '--dir', devDir, d
 
 // 等 dev-code attach（轮询事件表，最多 120s）
 const db = new DatabaseSync(join(spaceDir, 'space.sqlite'))
-function waitForAttach(memberId, timeoutMs) {
+async function waitForAttach(memberId, timeoutMs) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     const row = db
       .prepare("select id from events where kind = 'member.attached' and member_id = ? limit 1")
       .get(memberId)
     if (row) return true
-    execFileSync('sleep', ['0.2'])
+    await new Promise((r) => setTimeout(r, 200))
   }
   return false
 }
-const devAttached = waitForAttach('dev-code', 120000)
+const devAttached = await waitForAttach('dev-code', 120000)
 check('dev-code 通过 opencode 会话 attach 上空间', devAttached, `${((Date.now() - t0) / 1000).toFixed(1)}s`)
 
 console.log('\n启动 pm（dsh headless）…')
@@ -203,14 +208,32 @@ const devLine = devRes.stdout.split('\n').reverse().find((l) => l.includes('TASK
 check('dev-code 报告拿到并完成了任务', /TASK_DONE t_/.test(devLine), devLine.trim().slice(0, 80))
 
 const pmLine = pmRes.stdout.split('\n').reverse().find((l) => l.includes('HANDOFF')) ?? ''
-check('pm 报告收到 handoff 并解析成功', pmLine.includes('artifacts/add_kernel.cu') && pmLine.includes(HASH), pmLine.trim().slice(0, 100))
+check('pm 自述收到 handoff（仅旁证，不作判决）', pmLine.includes(ARTIFACT_REL) && pmLine.includes(HASH), pmLine.trim().slice(0, 100))
 
 // 空间侧客观核对：不采信 agent 的自述
 const dbv = new DatabaseSync(join(spaceDir, 'space.sqlite'))
 const doneTask = dbv.prepare("select id, state, handoff_uri, handoff_sha from tasks where state = 'DONE'").get()
 check('库里存在 DONE 且带 handoff 的任务', Boolean(doneTask?.handoff_uri), doneTask ? `${doneTask.id} → ${doneTask.handoff_uri}` : 'none')
-const events = dbv.prepare('select kind from events').all().map((r) => r.kind)
-check('事件流覆盖完整链路', ['member.attached', 'task.created', 'task.claimed', 'task.transitioned', 'artifact.published', 'handoff.written'].every((k) => events.includes(k)), `${events.length} events`)
+
+// 同一任务的完整状态链（不是「各种事件出现过」，而是同一条任务走完）
+const chain = doneTask
+  ? dbv.prepare("select kind, payload from events where task_id = ? order by id").all(doneTask.id).map((r) => r.kind)
+  : []
+check(
+  '同一任务的状态链完整（created→claimed→transitioned→handoff）',
+  ['task.created', 'task.claimed', 'task.transitioned', 'artifact.published', 'handoff.written'].every((k) => chain.includes(k)),
+  chain.join('→'),
+)
+
+// 产物必须真实存在且与登记一致（原版 artifacts/add_kernel.cu 从头到尾不存在）
+const artifactPath = join(spaceDir, ARTIFACT_REL)
+const artifactOk = existsSync(artifactPath) && createHash('sha256').update(readFileSync(artifactPath)).digest('hex') === HASH
+const registry = dbv.prepare('select sha256, size from artifacts where uri = ?').get(ARTIFACT_REL)
+check(
+  '产物真实落盘且与登记一致（sha256 + size）',
+  artifactOk && registry?.sha256 === HASH && Number(registry?.size) === SIZE,
+  `file=${existsSync(artifactPath)} registry=${registry?.sha256?.slice(0, 8)}`,
+)
 dbv.close()
 
 const verified = { ok: spaceCli(['verify', '--dir', spaceDir]).includes('projection OK') }
