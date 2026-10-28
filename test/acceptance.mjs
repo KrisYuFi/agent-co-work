@@ -378,7 +378,8 @@ try {
   const leaseTask = await B.tool('space_task_create', { type: 'assign', to: 'intruder', op: 'lease-test' })
   await C.tool('space_task_claim', { task_id: leaseTask.task_id, lease_sec: 1 })
   await sleep(1300)
-  await C.tool('space_task_list', {})
+  // 关键：由**别的成员**触发扫描。持有者自己调用会顺延自己的租约（ADR 0010 的活跃续期）
+  await B.tool('space_task_list', {})
   const afterSweep = rowOf(leaseTask.task_id)
   check(
     '租约过期被回收（PENDING + attempts=1 + 认领数清零）',
@@ -390,7 +391,7 @@ try {
 
   for (let i = 0; i < 5; i++) {
     await sleep(1300)
-    await C.tool('space_task_list', {})
+    await B.tool('space_task_list', {})
     const r = rowOf(leaseTask.task_id)
     if (r.state === 'FAILED') break
     if (r.state === 'PENDING') {
@@ -403,6 +404,17 @@ try {
   }
   const finalRow = rowOf(leaseTask.task_id)
   check('重试预算耗尽转 FAILED（attempts ≥ 3）', finalRow.state === 'FAILED' && finalRow.attempts >= 3, JSON.stringify({ state: finalRow.state, attempts: finalRow.attempts }))
+
+  // ── 9b. 活跃即心跳：持有者只要还在调工具，租约就顺延（ADR 0010）
+  const alive = await B.tool('space_task_create', { type: 'assign', to: 'intruder', op: 'alive-test' })
+  const aliveClaim = await C.tool('space_task_claim', { task_id: alive.task_id, lease_sec: 2 })
+  await sleep(1500)
+  await C.tool('space_task_transition', { task_id: alive.task_id, lease_id: aliveClaim.lease_id, to: 'WORKING' }) // 这次调用顺延租约
+  await sleep(1500) // 距最初认领已 3s > 2s 租约
+  const aliveRow = rowOf(alive.task_id)
+  check('持有者活跃时租约被顺延（不会因为"干活不心跳"被判过期）', aliveRow.state === 'WORKING' && aliveRow.owner === 'intruder', `state=${aliveRow.state} owner=${aliveRow.owner}`)
+  // 收尾
+  await C.tool('space_task_transition', { task_id: alive.task_id, lease_id: aliveClaim.lease_id, to: 'CANCELED', payload: { reason: '验收用' } })
 
   // ── 10. 广播的竞争消费：v0.2 只有一个租约，必须显式拒绝而不是假装支持 ──
   try {

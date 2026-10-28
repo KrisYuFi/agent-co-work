@@ -11,6 +11,7 @@
 |---|---|---|
 | 2026-10-28 | 阶段 1 技术探针（[`probe/RESULTS.md`](../../probe/RESULTS.md) · [ADR 0005](../decisions/0005-wait-bounded-by-client-tool-timeout.md)） | §6.2 补 `wait` 时长受客户端工具调用超时约束（默认 20s、`max_block_sec` clamp、超时为正常返回、进度通知仅作优化）；§6.3 待实测项结案；§7 `space_attach`/`space_wait` 参数与返回值；§13 未定项 5/6 结案 |
 | 2026-10-28 | 阶段 2 原型实现（[ADR 0006](../decisions/0006-node-sqlite-per-member-stdio.md) · [ADR 0007](../decisions/0007-token-issue-and-revoke.md)） | §1.2 注明实现拓扑偏离（N 进程 + 单库）；§3.2 补 `message.sent` / `task.requeued` / `token.revoked`；§7 `space_attach` 增加 `cursor` 与 `constitution_version`；§13 未定项 3 结案 |
+| 2026-10-28 | 多机实跑发现租约过短（[ADR 0010](../decisions/0010-lease-budget-and-active-renewal.md)） | §4.2/§6.2/§12 默认租约 300s→900s；新增「活跃即心跳」：任何工具调用顺延持有租约；过期只由第三方操作触发扫描 |
 | 2026-10-28 | 独立 review 打回后的修复（[ADR 0008](../decisions/0008-reclaim-semantics-and-mechanism-integrity.md)） | §2.2 标注路径级 ACL 未实现；§2.3 attach 成为硬前置；§4.2 补中断态出边与回收释放租约、标注 `REJECTED`/`EXPIRED` 缺口；§5 R2/R3 改为服务端确定归属、R4/R5 标注未实现；§7 按实现重写接口表（16 个工具）；§11 补 4 个真实错误码；§12 说明 claims 语义与资源无回收 |
 
 > **版本策略**：仍有「草案（未实现）」阶段、无外部消费者时，修订**合并进本文**并记入上表；一旦阶段 2 产生实现或外部接入方，语义变更改为新建 `protocol-v0.2.md`、旧版标「已被取代」并保留。
@@ -203,7 +204,7 @@ A2A 的 `TaskState` 分三类，我们照抄分类，并补两个它没有的状
 | `WORKING → DONE` | 租约持有者 | **必须同时提交 handoff 引用**，否则拒绝 |
 | `WORKING → FAILED` | 租约持有者 | 必须附 `reason` 与可复现证据 |
 | `WORKING → REVISION_REQUESTED` | **QA（非本人）** | 见 §5 |
-| `CLAIMED/WORKING/WAITING_*/BLOCKED → EXPIRED` | **server**（租约超时） | attempts+1；超 3 次转 `FAILED`；**同时释放租约并清空认领计数** |
+| `CLAIMED/WORKING/WAITING_*/BLOCKED → EXPIRED` | **server**（租约超时） | attempts+1；超 3 次转 `FAILED`；**同时释放租约并清空认领计数**。默认租约 900s，见 [ADR 0010](../decisions/0010-lease-budget-and-active-renewal.md) |
 | `CLAIMED/WORKING → PENDING` | 租约持有者 / server 回收 | 必须释放 lease 与 owner（否则任务看起来可认领、实际谁也接不了） |
 | `WAITING_INPUT/WAITING_AUTH/BLOCKED → WORKING` | 租约持有者 | 中断恢复；中断态**同样受租约回收管辖**（agent 最可能崩在等人回答的时刻） |
 | 任何非终态 → `CANCELED` | 持有者，或 `human` | 人可作废他人任务（协议 §2.1） |
@@ -303,6 +304,8 @@ if slot.round > limit: → LOOP_EXHAUSTED（拒绝创建，落盘证据，暂停
 
 - `wait` 在 server 端是**挂住连接**（非轮询风暴）。
 - `wait` 返回时**顺带续 lease + 心跳**，一次调用做三件事，不会漏续租。
+- **活跃即心跳**：不止 `wait`，成员**任何一次工具调用**都会顺延它持有的租约（ADR 0010）。
+  因此「在长 turn 里埋头写文档、几分钟不调工具」是持有租约的唯一危险动作——`lease_sec` 要按任务类型给足。
 - **单次 `wait` 的时长受客户端工具调用超时约束**：实测默认值仅为 opencode 30s / DSH 60s，超时即断（[ADR 0005](../decisions/0005-wait-bounded-by-client-tool-timeout.md)）。因此 `timeout_sec` **默认 20s**；客户端在 `capabilities.max_block_sec` 自报上限，**server 把 `timeout_sec` clamp 到该值**并在返回值回显 `effective_timeout_sec`。未声明按 20s。
 - **超时返回是正常返回**（`reason: "timeout"`），不是错误，agent 必须继续循环。协议层不允许把超时当失败——否则 agent 会「礼貌地」放弃等待。
 - **进度通知只作优化**：server 可在 `wait` 期间发 `notifications/progress`（opencode 据此续期超时，实测有效），但 DSH 连 `progressToken` 都不发，**不得把续期当通用机制**。
@@ -488,6 +491,7 @@ slots(op, slot, round)                                -- R2 的载体
 
 - `events.id` 同时是 `wait` 的游标：`attach` 返回当前最大 id，`wait(since_cursor)` 从这个 id 往后读。
 - 预算表（`budget`）**尚未实现**，`BUDGET_EXCEEDED` 是预留错误码。
+- 默认租约 `lease_sec = 900`（上限 3600）；`claim` 可按任务类型指定更短或更长（ADR 0010）
 - `tasks.claims_count` 是**当前活跃认领数**（回到 `PENDING` 必须归零）；重试预算由 `attempts` 单独承担（ADR 0008）。
   v0.2 只支持 `claims_max = 1`，多成员竞争消费留到阶段 4（需要 `task_claims` 表）。
 - `resources` **没有心跳也没有自动回收**：租约到期即失效，长任务会中途静默失去独占（阶段 4）。

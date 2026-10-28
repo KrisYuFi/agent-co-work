@@ -27,7 +27,9 @@ import {
 } from './invariants.mjs'
 
 const DEFAULT_BLOCK_SEC = 20
-const DEFAULT_LEASE_SEC = 300
+// 500s → 900s：实测一次设计复核（读 30KB 方案 + 写报告）就要 5 分钟出头，
+// 300s 的默认值会让任务在成员**正在干活**时被判过期回队（见 ADR 0010）
+const DEFAULT_LEASE_SEC = 900
 const MAX_ATTEMPTS = 3
 /** 单次 wait 的硬上限：再大也只会让 agent 白等（ADR 0005） */
 const MAX_BLOCK_SEC = 300
@@ -310,9 +312,21 @@ export async function wait(ctx, args = {}) {
   }
 }
 
+/** 活跃续期：任何工具调用都算心跳，顺延该成员持有的任务租约（ADR 0010） */
+export function touchMemberLeases(ctx) {
+  if (!ctx.member) return 0
+  renewLeases(ctx.db, ctx.member)
+  return 1
+}
+
 /** wait 返回即续租：一次调用做三件事，不会漏续租（协议 §6.2） */
 function renewLeases(db, member) {
   const now = Date.now()
+  // 没有租约就完全不动（避免每次读工具都开写事务）
+  const holding = db
+    .prepare("select count(*) c from tasks where owner = ? and state in ('CLAIMED','WORKING')")
+    .get(member.id)
+  if (!holding?.c) return
   txn(db, () => {
     const held = db
       .prepare("select id, lease_sec from tasks where owner = ? and state in ('CLAIMED','WORKING')")

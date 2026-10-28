@@ -17,6 +17,7 @@
 | [0007](0007-token-issue-and-revoke.md) | token 由 CLI 签发、库内只存哈希，吊销即时回收任务 | 已接受 | 2026-10-28 |
 | [0008](0008-reclaim-semantics-and-mechanism-integrity.md) | 回收语义与机制完整性：认领计数/重试预算分离、R2 由 CP 推导、R3 独立动作、吊销可解封 | 已接受 | 2026-10-28 |
 | [0009](0009-verification-must-be-mutation-tested.md) | 验收必须做变异测试：全绿不等于完成 | 已接受 | 2026-10-28 |
+| [0010](0010-lease-budget-and-active-renewal.md) | 租约默认 900s + 「活跃即心跳」：任何工具调用顺延持有租约 | 已接受 | 2026-10-28 |
 
 ## 模板
 

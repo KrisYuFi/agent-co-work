@@ -223,6 +223,14 @@ export function createDispatcher(ctx, { name = 'space', version = '0.1.0', onLog
             return
           }
         }
+        // 活跃即心跳：成员只要还在调用工具，就说明它没掉线，持有的租约顺延。
+        // 这样「干活期间不心跳」不会把任务误判过期（ADR 0010）
+        try {
+          service.touchMemberLeases(ctx)
+        } catch (err) {
+          onLog(`lease touch failed: ${err?.message ?? err}`)
+        }
+
         const fn = HANDLERS[toolName]
         if (!fn) {
           reply({ jsonrpc: '2.0', id, result: textResult({ error: 'UNKNOWN_TOOL', message: `unknown tool ${toolName}` }, true) })
