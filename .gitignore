@@ -31,6 +31,9 @@ build/
 *.token
 secrets/
 
+# docker 实验的运行时数据（空间库、token、容器里产出的文件）
+deploy/docker/runtime/
+
 # 探针产物（临时工作目录可丢弃；判决证据在 probe/results/raw/ 里随记录入库）
 probe/work/
 probe/**/out/

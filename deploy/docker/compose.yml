@@ -1,0 +1,74 @@
+# 跨机器模拟：hub 与成员在**不同的容器**里，只通过网络相连。
+#
+# 与同机测试的区别（也是这个 compose 的意义）：
+#   - 成员**拿不到** space.sqlite（不挂那个卷）→ 必须走 hub，共享文件这条捷径在物理上被堵死
+#   - 每个成员是独立网络命名空间里的独立进程 → `docker kill` 就是真实的机器掉线
+#
+# 用法见 run-kill-test.mjs
+
+name: space-machine
+
+services:
+  # 一次性：初始化空间 + 签发 token（写到共享卷里）
+  init:
+    build: .
+    profiles: ["tools"]
+    volumes:
+      - ./runtime:/space
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        node src/cli.mjs init --dir /space
+        mkdir -p /space/tokens /space/artifacts
+        node src/cli.mjs token issue --dir /space --member pm --role pm > /space/tokens/pm.token
+        node src/cli.mjs token issue --dir /space --member dev-a --role developer > /space/tokens/dev-a.token
+        node src/cli.mjs token issue --dir /space --member dev-b --role developer > /space/tokens/dev-b.token
+        echo "init done"
+
+  hub:
+    build: .
+    volumes:
+      - ./runtime:/space
+    ports:
+      - "7321:7321"
+    command: ["node", "src/cli.mjs", "serve", "--dir", "/space", "--listen", "0.0.0.0:7321"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:7321/mcp',{method:'POST',headers:{'content-type':'application/json'},body:'{}'}).then(()=>process.exit(0)).catch(()=>process.exit(1))"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  pm:
+    build: .
+    profiles: ["members"]
+    depends_on:
+      hub:
+        condition: service_healthy
+    volumes:
+      - ./runtime:/space
+      - ./member.mjs:/app/member.mjs:ro
+    command: ["node", "member.mjs", "--role", "pm", "--url", "http://hub:7321/mcp", "--token-file", "/space/tokens/pm.token", "--space", "/space"]
+
+  dev-a:
+    build: .
+    profiles: ["members"]
+    depends_on:
+      hub:
+        condition: service_healthy
+    volumes:
+      - ./runtime:/space
+      - ./member.mjs:/app/member.mjs:ro
+    command: ["node", "member.mjs", "--role", "crash", "--url", "http://hub:7321/mcp", "--token-file", "/space/tokens/dev-a.token", "--space", "/space"]
+
+  dev-b:
+    build: .
+    profiles: ["members"]
+    depends_on:
+      hub:
+        condition: service_healthy
+    volumes:
+      - ./runtime:/space
+      - ./member.mjs:/app/member.mjs:ro
+    command: ["node", "member.mjs", "--role", "finish", "--url", "http://hub:7321/mcp", "--token-file", "/space/tokens/dev-b.token", "--space", "/space"]

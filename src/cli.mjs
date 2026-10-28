@@ -17,6 +17,7 @@ import { openDb, resolveSpaceDir, metaGet } from './space/db.mjs'
 import { authenticate, issueToken, listTokens, revokeMember, unrevokeMember } from './space/tokens.mjs'
 import { appendEvent, formatEvent } from './space/events.mjs'
 import { serveStdio } from './space/mcp.mjs'
+import * as httpModule from './space/http.mjs'
 import { verify } from './space/service.mjs'
 
 // ---------------------------------------------------------------- 参数解析
@@ -146,6 +147,21 @@ function cmdToken(args) {
 
 function cmdServe(args) {
   const db = openDb(args.dir)
+
+  // hub 模式：单进程 + 单 sqlite + MCP over Streamable HTTP，成员从各处接入（跨机器的前提）
+  if (args.listen && args.listen !== true) {
+    const [host, port] = String(args.listen).split(':')
+    const { serveHttp } = httpModule
+    serveHttp({
+      db,
+      host: host || '0.0.0.0',
+      port: Number(port || 7321),
+      authenticate,
+      onLog: (msg) => console.error(`[hub ${new Date().toISOString().slice(11, 19)}] ${msg}`),
+    })
+    return
+  }
+
   const token = readToken(args)
   if (!token) die('serve needs a token: --token-file <p>, --token <t>, or SPACE_TOKEN')
   let member
@@ -176,6 +192,54 @@ function cmdAttach(args) {
   const cli = join(import.meta.dirname, 'cli.mjs')
   const spaceDir = db.spaceDir
   const tokenFile = args['token-file'] && args['token-file'] !== true ? args['token-file'] : null
+
+  const remoteUrl = args.url && args.url !== true ? String(args.url) : null
+  const bearer = token
+
+  if (remoteUrl) {
+    if (runtime === 'opencode') {
+      console.log(
+        JSON.stringify(
+          {
+            $schema: 'https://opencode.ai/config.json',
+            mcp: {
+              space: {
+                type: 'remote',
+                url: remoteUrl,
+                enabled: true,
+                oauth: false,
+                headers: { Authorization: `Bearer ${bearer}` },
+              },
+            },
+          },
+          null,
+          2,
+        ),
+      )
+    } else if (runtime === 'dsh') {
+      console.log(
+        [
+          '- insert:',
+          '    - id: space',
+          "      name: '@deepseek-ai/dsh-mcp-client'",
+          '      config:',
+          '        serverName: space',
+          '        transport: streamable-http',
+          `        url: ${remoteUrl}`,
+          '        headers:',
+          `          Authorization: Bearer ${bearer}`,
+        ].join('\n'),
+      )
+    } else if (runtime === 'claude') {
+      console.log(JSON.stringify({ mcpServers: { space: { type: 'http', url: remoteUrl, headers: { Authorization: `Bearer ${bearer}` } } } }, null, 2))
+    } else {
+      die('--runtime required: opencode | dsh | claude')
+    }
+    console.error(`# member ${member.id} (${member.kind}/${member.role}) · hub ${remoteUrl}`)
+    console.error('# 注意：token 是内联的，别把生成的配置文件提交进 git')
+    db.close()
+    return
+  }
 
   if (runtime === 'opencode') {
     const cfg = {
@@ -311,8 +375,9 @@ try {
   space init    [--dir <path>] [--constitution-version N]
   space token   issue --member <id> --role <r> [--kind role|human] [--scopes a,b] [--ttl 7d]
                 list | revoke --member <id>
-  space serve   --token-file <p> | --token <t>   （MCP over stdio，供 agent 接入）
-  space attach  --runtime opencode|dsh|claude --token-file <p>
+  space serve   --token-file <p> | --token <t>   （stdio：一个成员一个进程，本机开发用）
+                --listen 0.0.0.0:7321           （hub：单进程 + HTTP，跨机器接入用）
+  space attach  --runtime opencode|dsh|claude --token-file <p> [--url http://hub:7321/mcp]
   space trace   [--limit N] [--follow]
   space verify  （投影 vs 事件归约）
   space tasks   [--op <name>]

@@ -78,7 +78,8 @@ agent-co-work/
 ```bash
 node src/cli.mjs init --dir ./space
 node src/cli.mjs token issue --dir ./space --member dev-code --role developer > dev-code.token
-node src/cli.mjs serve --dir ./space --token-file dev-code.token    # MCP over stdio，供 agent 接入
+node src/cli.mjs serve --dir ./space --token-file dev-code.token    # stdio：本机开发，一个成员一个进程
+node src/cli.mjs serve --dir ./space --listen 0.0.0.0:7321          # hub：单进程 + HTTP，跨机器接入
 node src/cli.mjs trace --dir ./space                                 # 事件流就是 trace
 ```
 
@@ -91,7 +92,10 @@ node src/cli.mjs trace --dir ./space                                 # 事件流
 - **崩溃可回收**：租约过期 → 任务回队 → **别的成员能接手** → 重试三次转 `FAILED`
 - **状态可重放**：`space verify` 断言投影与事件归约一致（且有负向测试）
 
-还没做的：跨机器（阶段 3，必然引入 HTTP）、R4/R5 两条不变式、预算熔断、路径级写 ACL、多成员竞争消费（`claims_max>1` 当前**显式拒绝**）、经验分享平面（阶段 5）。
+已跑通跨机器形态：hub 跑在「服务器」上，成员（含 docker 容器里的）通过网络接入。`docker kill` 掉一个成员后，
+任务在租约过期被回队、**另一个容器里的成员 4 秒内接手完成**。
+
+还没做的：真实 agent 进容器、R4/R5 两条不变式、预算熔断、路径级写 ACL、多成员竞争消费（`claims_max>1` 当前**显式拒绝**）、经验分享平面（阶段 5）。
 
 > 阶段 2 第一次被评为「已完成」是错的：当时 25/25 全绿，但变异测试显示 53% 的实现缺陷不会被发现。
 > 教训与现在的验收标准见 [ADR 0009](docs/decisions/0009-verification-must-be-mutation-tested.md)。

@@ -2,6 +2,36 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。当前处于**设计阶段**，版本号用于标记设计与协议的里程碑。
 
+## [0.5.0] - 2026-10-28
+
+**中心化 hub + 跨机器验证。**「所有成员连到一台服务器上的协作空间」这个形态跑通了，并且做出了同机测试做不到的实验。
+
+### Added
+
+- **`space serve --listen 0.0.0.0:7321`** — hub 模式：单进程 + 单 sqlite + **MCP over Streamable HTTP** + Bearer 鉴权
+- **`src/space/http.mjs`** — HTTP 传输层；`src/space/mcp.mjs` 抽出 `createDispatcher`，stdio 与 HTTP 共用同一套工具语义
+- **`space attach --url http://hub:7321/mcp`** — 打印成员的 remote 接入配置（opencode remote / dsh streamable-http / claude http）
+- **`test/hub-e2e.mjs`** — 两个**真实 agent**（opencode + dsh）通过 HTTP hub 协作，6/6
+- **`deploy/docker/`** — 跨机器模拟：宿主机当服务器、容器当机器（成员只挂 tokens/artifacts，**看不到 sqlite**）
+
+### 验证
+
+| 实验 | 结果 |
+|---|---|
+| 两个真实 agent 走 HTTP hub | 6/6（`member.attached → task.created → claimed → DONE + handoff`） |
+| **跨机器掉线回收**（docker kill 成员容器） | **10/10**，从 kill 到另一个容器接手完成 **4.0s** |
+| stdio 回归 | 56/56（保留 stdio 作为本机开发用，用户已确认） |
+
+### Notes
+
+- 成员容器**只挂 `tokens/` 与 `artifacts/`**，共享文件这条捷径被物理堵死 —— 这是 ADR 0001 想要的形态
+- 本机 Docker Hub 不通且镜像里没有 node，所以成员用 `ascendai/cann` 镜像里的 Python（`member.py` 仅标准库）；
+  hub 仍跑在宿主 Node 上。`compose.yml` + `Dockerfile` 留给有 registry 的环境
+- 已知取舍：`attach` 状态在 hub 进程内存里，**hub 重启后成员需重新 attach**；SSE 推送流未实现（`GET /mcp` 回 405）
+- 仍未做：真实 agent 进容器（镜像里没有 opencode/dsh）、hub 重启后的未确认任务补投、真的 Windows + FPGA
+
+---
+
 ## [0.4.1] - 2026-10-28
 
 **PM 换成真实会话：三个真实 agent 并发跑完设计段，10/10。**

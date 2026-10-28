@@ -160,21 +160,20 @@ const HANDLERS = {
 
 const PROTOCOL_FALLBACK = '2025-06-18'
 
-function send(msg) {
-  process.stdout.write(JSON.stringify(msg) + '\n')
-}
-
 function textResult(payload, isError = false) {
   return { content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }], isError }
 }
 
 /** 启动一个成员会话的 MCP 服务器（stdio） */
-export function serveStdio(ctx, { name = 'space', version = '0.1.0', onLog = () => {} } = {}) {
-  const { db, member } = ctx
-
+/**
+ * JSON-RPC 分发器：把「工具的语义」与「传输」解耦。
+ * stdio 与 Streamable HTTP 各建一个实例，共用同一份工具表与错误码。
+ */
+export function createDispatcher(ctx, { name = 'space', version = '0.1.0', onLog = () => {}, send } = {}) {
   // 在飞的请求：id → AbortController。人插话时 runtime 会发 notifications/cancelled，
   // 服务端必须**真的停手**——否则被放弃的 wait 会跑满 deadline，占着 handler（已实测的泄漏）。
   const inflight = new Map()
+  const reply = send ?? ((msg) => process.stdout.write(JSON.stringify(msg) + '\n'))
 
   async function handle(msg) {
     const { id, method, params } = msg
@@ -196,7 +195,7 @@ export function serveStdio(ctx, { name = 'space', version = '0.1.0', onLog = () 
 
     switch (method) {
       case 'initialize':
-        send({
+        reply({
           jsonrpc: '2.0',
           id,
           result: {
@@ -207,10 +206,10 @@ export function serveStdio(ctx, { name = 'space', version = '0.1.0', onLog = () 
         })
         return
       case 'ping':
-        send({ jsonrpc: '2.0', id, result: {} })
+        reply({ jsonrpc: '2.0', id, result: {} })
         return
       case 'tools/list':
-        send({ jsonrpc: '2.0', id, result: { tools: TOOLS } })
+        reply({ jsonrpc: '2.0', id, result: { tools: TOOLS } })
         return
       case 'tools/call': {
         const toolName = params?.name
@@ -220,20 +219,20 @@ export function serveStdio(ctx, { name = 'space', version = '0.1.0', onLog = () 
             ctx.member = ctx.reauth()
           } catch (err) {
             onLog(`${toolName} REJECTED ${err.code ?? 'TOKEN_INVALID'}: ${err.message}`)
-            send({ jsonrpc: '2.0', id, result: textResult({ error: err.code ?? 'TOKEN_INVALID', message: err.message }, true) })
+            reply({ jsonrpc: '2.0', id, result: textResult({ error: err.code ?? 'TOKEN_INVALID', message: err.message }, true) })
             return
           }
         }
         const fn = HANDLERS[toolName]
         if (!fn) {
-          send({ jsonrpc: '2.0', id, result: textResult({ error: 'UNKNOWN_TOOL', message: `unknown tool ${toolName}` }, true) })
+          reply({ jsonrpc: '2.0', id, result: textResult({ error: 'UNKNOWN_TOOL', message: `unknown tool ${toolName}` }, true) })
           return
         }
         const need = TOOL_SCOPES[toolName]
         const scopes = ctx.member?.scopes ?? []
         if (need && scopes.length > 0 && !scopes.includes(need) && !scopes.includes('all')) {
           onLog(`${toolName} REJECTED FORBIDDEN_ROLE: needs scope ${need} (have ${scopes.join(',')})`)
-          send({ jsonrpc: '2.0', id, result: textResult({ error: 'FORBIDDEN_ROLE', message: `missing scope "${need}"` }, true) })
+          reply({ jsonrpc: '2.0', id, result: textResult({ error: 'FORBIDDEN_ROLE', message: `missing scope "${need}"` }, true) })
           return
         }
         const controller = new AbortController()
@@ -245,7 +244,7 @@ export function serveStdio(ctx, { name = 'space', version = '0.1.0', onLog = () 
             return // 客户端已经放弃这次调用，不要再回一条响应
           }
           onLog(`${toolName} ok`)
-          send({ jsonrpc: '2.0', id, result: textResult(result) })
+          reply({ jsonrpc: '2.0', id, result: textResult(result) })
         } catch (err) {
           if (controller.signal.aborted || err?.code === 'CANCELLED') {
             onLog(`${toolName} aborted (client cancelled)`)
@@ -253,10 +252,10 @@ export function serveStdio(ctx, { name = 'space', version = '0.1.0', onLog = () 
           }
           if (err instanceof SpaceError) {
             onLog(`${toolName} REJECTED ${err.code}: ${err.message}`)
-            send({ jsonrpc: '2.0', id, result: textResult({ error: err.code, message: err.message, detail: err.detail ?? null }, true) })
+            reply({ jsonrpc: '2.0', id, result: textResult({ error: err.code, message: err.message, detail: err.detail ?? null }, true) })
           } else {
             onLog(`${toolName} ERROR ${err?.message ?? err}`)
-            send({ jsonrpc: '2.0', id, result: textResult({ error: 'INTERNAL', message: String(err?.message ?? err) }, true) })
+            reply({ jsonrpc: '2.0', id, result: textResult({ error: 'INTERNAL', message: String(err?.message ?? err) }, true) })
           }
         } finally {
           inflight.delete(id)
@@ -265,10 +264,17 @@ export function serveStdio(ctx, { name = 'space', version = '0.1.0', onLog = () 
       }
       default:
         // 包括 DSH 的私有 `server/discover`：协议层不猜私有 schema
-        send({ jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } })
+        reply({ jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } })
     }
   }
 
+  return { handle, inflight, name, version }
+}
+
+/** stdio 传输：一个进程服务一个成员（本机开发用，保留） */
+export function serveStdio(ctx, { name = 'space', version = '0.1.0', onLog = () => {} } = {}) {
+  const dispatcher = createDispatcher(ctx, { name, version, onLog })
+  const { db, member } = ctx
   let buf = ''
   process.stdin.setEncoding('utf8')
   process.stdin.on('data', (chunk) => {
@@ -284,7 +290,7 @@ export function serveStdio(ctx, { name = 'space', version = '0.1.0', onLog = () 
       } catch {
         continue
       }
-      handle(msg).catch((err) => onLog(`handler crash: ${err?.message ?? err}`))
+      dispatcher.handle(msg).catch((err) => onLog(`handler crash: ${err?.message ?? err}`))
     }
   })
   process.stdin.on('end', () => {
