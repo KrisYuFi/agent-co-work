@@ -91,17 +91,24 @@ P3 在**至少一个** runtime 上成立 → 可以进入阶段 2，并以该 ru
 - 越权操作被 server 拒绝（不是被 prompt 劝阻）
 - 事件流可作为调试 trace 使用
 
-### 实测结论（2026-10-28）
+### 实测结论（2026-10-28，经独立 review 打回后重测）
 
-| 通过标准 | 证据 | 结果 |
-|---|---|---|
-| 全链路无人干预推进 | `test/e2e-real.mjs`：**真实 agent**（opencode 当 dev-code + DSH 当 pm）跑完 attach → create → wait → claim → publish → DONE+handoff → 下游解析 | ✅ 8/8 |
-| 人插话后恢复 | `test/acceptance.mjs`：挂着的 `wait` 被放弃 → 人发消息 → 恢复并收到 | ✅ |
-| 越权被 server 拒绝 | `LEASE_MISMATCH` / `FORBIDDEN_ROLE` / `RESOURCE_BUSY` / `TOKEN_REVOKED` 四个码，全部由 server 返回而非提示词劝阻 | ✅ 25/25 |
-| 事件流可作 trace | `space trace`（人可读）、`space verify`（投影 == 事件归约） | ✅ |
+| 通过标准 | 证据 | 证据强度 | 结果 |
+|---|---|---|---|
+| 全链路无人干预推进 | 真实 agent（opencode 当 dev-code + DSH 当 pm）：**同一条任务**的 `created→claimed→WORKING→publish→DONE→handoff` 状态链，产物真实落盘且 sha256/size 与登记一致 | 客观核对（直查 sqlite + 校验文件） | ✅ 9/9 |
+| 人插话后恢复等待 | 服务端收到 `notifications/cancelled` 后**中止 handler**（stderr 可证）、旧请求不再响应、恢复后 wait 收到人的消息 | 客观核对 | ✅ |
+| 越权被 server 拒绝 | 8 类越权全部由 server 返回错误码：`LEASE_MISMATCH` / `FORBIDDEN_ROLE` / `RESOURCE_BUSY` / `TOKEN_REVOKED` / `NOT_ATTACHED` / `ARTIFACT_MISSING` / `TASK_ALREADY_CLAIMED` / `CONSTRAINT_*` | 客观核对 | ✅ 55 条断言 |
+| 事件流可作 trace | `space trace` 覆盖 8 类事件；`space verify` 有**负向测试**（篡改投影必报 drift） | 客观核对 | ✅ |
 
-未实现、明确留给阶段 4：**R4 杠杆评估门**、**R5 修改不越权**（需要现有工作流语义）、预算熔断（`BUDGET_EXCEEDED` 预留）。
-E2E 的提示词目前把协议步骤写死在步骤里，阶段 4 要下沉到宪法 + server 校验。
+**历史更正**：这个阶段第一次被评为「已完成」是**错的**。当时 25/25 全绿，但独立 review 做了 19 个变异，**9 个存活**——把 R1、租约回收、`verify`、`wait` 超时、scope 逐个删掉，测试仍然全绿。修复内容见 [ADR 0008](docs/decisions/0008-reclaim-semantics-and-mechanism-integrity.md)，验收标准改成「断言必须有牙」见 [ADR 0009](docs/decisions/0009-verification-must-be-mutation-tested.md)。
+
+修复后的验收规模：**55 条断言**，13 个变异杀死 11 个（存活的 2 个是双重防护）。
+
+未实现、明确留给后续阶段：
+- **R4 杠杆评估门**、**R5 修改不越权**（需要现有工作流语义，阶段 4）
+- 预算熔断（`BUDGET_EXCEEDED` 仍是预留码）、路径级写 ACL（§2.2，阶段 3 选存储时一起落）
+- 多成员竞争消费（`claims_max > 1`，v0.2 **显式拒绝**而非假装支持）
+- 资源租约无心跳无回收；消息无 TTL；变异测试未进 CI
 
 ### 风险
 

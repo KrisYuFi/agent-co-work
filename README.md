@@ -2,7 +2,7 @@
 
 > **Agent 协作空间**：让多个 agent 以**独立、可人工干预的会话**协作，而不是由一个主 agent 在进程内偷偷调用子 agent。
 >
-> **当前状态：阶段 2 最小原型已跑通**（真实 agent 端到端 8/8）。仍是原型，不是可用产品。
+> **当前状态：阶段 2 最小原型已跑通并过了独立 review**（假成员验收 55/55、真实 agent 端到端 9/9、变异测试 13 杀 11）。仍是原型，不是可用产品。
 
 ---
 
@@ -85,12 +85,16 @@ node src/cli.mjs trace --dir ./space                                 # 事件流
 已实测成立的部分：
 
 - **真实 agent 能挂上去干活**：opencode 当开发成员、DSH 当 PM，无人干预跑完
-  `attach → create → wait → claim → publish → DONE + handoff → 下游解析`（8/8）
-- **越权由 server 拒绝**，不是靠提示词劝阻（25 项验收全通过）
-- **人中途插话**后 agent 能恢复等待
-- **状态可重放**：`space verify` 断言投影与事件归约一致
+  `attach → create → wait → claim → publish → DONE + handoff → 下游解析`（9/9，含产物 sha256 校验）
+- **越权由 server 拒绝**，不是靠提示词劝阻（55 条断言含 12 条安全回归）
+- **人中途插话**：服务端会真的中止挂着的 `wait`，恢复后继续
+- **崩溃可回收**：租约过期 → 任务回队 → **别的成员能接手** → 重试三次转 `FAILED`
+- **状态可重放**：`space verify` 断言投影与事件归约一致（且有负向测试）
 
-还没做的：跨机器（阶段 3，必然引入 HTTP）、R4/R5 两条不变式、预算熔断、经验分享平面（阶段 5）。
+还没做的：跨机器（阶段 3，必然引入 HTTP）、R4/R5 两条不变式、预算熔断、路径级写 ACL、多成员竞争消费（`claims_max>1` 当前**显式拒绝**）、经验分享平面（阶段 5）。
+
+> 阶段 2 第一次被评为「已完成」是错的：当时 25/25 全绿，但变异测试显示 53% 的实现缺陷不会被发现。
+> 教训与现在的验收标准见 [ADR 0009](docs/decisions/0009-verification-must-be-mutation-tested.md)。
 
 细节：协议语义看 [`docs/design/protocol-v0.1.md`](docs/design/protocol-v0.1.md)，验证过程看 [`probe/RESULTS.md`](probe/RESULTS.md) 与 [`test/README.md`](test/README.md)。
 

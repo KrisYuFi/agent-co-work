@@ -15,6 +15,8 @@
 | [0005](0005-wait-bounded-by-client-tool-timeout.md) | `wait` 默认 20s，上限由客户端 `max_block_sec` 声明并由 server clamp | 已接受 | 2026-10-28 |
 | [0006](0006-node-sqlite-per-member-stdio.md) | 阶段 2 选型：Node 内置 sqlite + 每成员一个 stdio 服务进程 | 已接受 | 2026-10-28 |
 | [0007](0007-token-issue-and-revoke.md) | token 由 CLI 签发、库内只存哈希，吊销即时回收任务 | 已接受 | 2026-10-28 |
+| [0008](0008-reclaim-semantics-and-mechanism-integrity.md) | 回收语义与机制完整性：认领计数/重试预算分离、R2 由 CP 推导、R3 独立动作、吊销可解封 | 已接受 | 2026-10-28 |
+| [0009](0009-verification-must-be-mutation-tested.md) | 验收必须做变异测试：全绿不等于完成 | 已接受 | 2026-10-28 |
 
 ## 模板
 

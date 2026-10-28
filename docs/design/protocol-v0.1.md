@@ -1,6 +1,6 @@
 # 协议草案 v0.1
 
-> 状态：**草案（未实现）**。本文只定语义与接口形状，不含实现代码。
+> 状态：**草案（阶段 2 原型已实现）**。`src/` 是可跑原型，本文仍是语义定义；两者不一致时以本文为准、并修实现。
 > 背景与动机见 [background.md](../background.md)；关键决策的取舍理由见 [decisions/](../decisions/)。
 > 定位：把 agent 编排从「进程内主 agent 同步调用 subagent」改为「多个独立 session 经中心协作空间异步协作」。
 > 目的：让每个角色 agent 成为**可人工干预、可跨机器、可重启恢复**的独立会话。
@@ -11,6 +11,7 @@
 |---|---|---|
 | 2026-10-28 | 阶段 1 技术探针（[`probe/RESULTS.md`](../../probe/RESULTS.md) · [ADR 0005](../decisions/0005-wait-bounded-by-client-tool-timeout.md)） | §6.2 补 `wait` 时长受客户端工具调用超时约束（默认 20s、`max_block_sec` clamp、超时为正常返回、进度通知仅作优化）；§6.3 待实测项结案；§7 `space_attach`/`space_wait` 参数与返回值；§13 未定项 5/6 结案 |
 | 2026-10-28 | 阶段 2 原型实现（[ADR 0006](../decisions/0006-node-sqlite-per-member-stdio.md) · [ADR 0007](../decisions/0007-token-issue-and-revoke.md)） | §1.2 注明实现拓扑偏离（N 进程 + 单库）；§3.2 补 `message.sent` / `task.requeued` / `token.revoked`；§7 `space_attach` 增加 `cursor` 与 `constitution_version`；§13 未定项 3 结案 |
+| 2026-10-28 | 独立 review 打回后的修复（[ADR 0008](../decisions/0008-reclaim-semantics-and-mechanism-integrity.md)） | §2.2 标注路径级 ACL 未实现；§2.3 attach 成为硬前置；§4.2 补中断态出边与回收释放租约、标注 `REJECTED`/`EXPIRED` 缺口；§5 R2/R3 改为服务端确定归属、R4/R5 标注未实现；§7 按实现重写接口表（16 个工具）；§11 补 4 个真实错误码；§12 说明 claims 语义与资源无回收 |
 
 > **版本策略**：仍有「草案（未实现）」阶段、无外部消费者时，修订**合并进本文**并记入上表；一旦阶段 2 产生实现或外部接入方，语义变更改为新建 `protocol-v0.2.md`、旧版标「已被取代」并保留。
 
@@ -115,10 +116,15 @@
 | 扩展名 | `"*"` 或后缀数组 |
 | **独占区** | 每个成员只能写 `inbox/<自己的 id>/` 与自己名下任务的产物路径 |
 
+> **实现状态（v0.2 原型）**：上表**未实现**。当前 server 侧只做到：`space_publish` 的 `task_id` 归属校验 + DONE 时 handoff 必须由本人为本人任务登记。
+> 目录/扩展名/独占区这套路径级 ACL 依赖真实产物仓库形态（阶段 3 选 NAS/对象存储时一起落）。
+> 读侧已收口：`task_list` / `state_get` / `artifact_resolve` 只返回与成员相关的任务与产物。
+
 ### 2.3 空间宪法（AGENTS.md）
 
 - 空间根有 `AGENTS.md`，**带版本号**（如 `constitution: 3`）。
 - `attach` 时成员上报自己遵守的版本；server 拒绝过旧版本（`CONSTITUTION_OUTDATED`）。
+- **未 `attach` 前，除 `space_attach` 外的工具一律拒绝**（`NOT_ATTACHED`）。否则跳过 attach 就等于绕过版本闸门——那只是提示词。
 - 目的：消灭「六个 agent 各自读着三个不同版本的规范在干活」的协议漂移。
 
 **宪法只留机制管不了的东西**：判断口径、证据标准、决策归属（谁能拍板）、何时必须找人。
@@ -197,15 +203,21 @@ A2A 的 `TaskState` 分三类，我们照抄分类，并补两个它没有的状
 | `WORKING → DONE` | 租约持有者 | **必须同时提交 handoff 引用**，否则拒绝 |
 | `WORKING → FAILED` | 租约持有者 | 必须附 `reason` 与可复现证据 |
 | `WORKING → REVISION_REQUESTED` | **QA（非本人）** | 见 §5 |
-| `CLAIMED/WORKING → EXPIRED` | **server**（超时） | attempts+1；超上限转 `FAILED` |
+| `CLAIMED/WORKING/WAITING_*/BLOCKED → EXPIRED` | **server**（租约超时） | attempts+1；超 3 次转 `FAILED`；**同时释放租约并清空认领计数** |
+| `CLAIMED/WORKING → PENDING` | 租约持有者 / server 回收 | 必须释放 lease 与 owner（否则任务看起来可认领、实际谁也接不了） |
+| `WAITING_INPUT/WAITING_AUTH/BLOCKED → WORKING` | 租约持有者 | 中断恢复；中断态**同样受租约回收管辖**（agent 最可能崩在等人回答的时刻） |
+| 任何非终态 → `CANCELED` | 持有者，或 `human` | 人可作废他人任务（协议 §2.1） |
 | 终态 → 任何 | **禁止** | Task Immutability（借用 A2A 原则） |
+
+> **已知缺口**：`REJECTED`（明确拒绝承接）在 v0.2 原型里**没有入边**，实际不可达；`EXPIRED` 也不作为末态停留（直接落 `PENDING`/`FAILED`）。
+> 二者保留在状态枚举里是为了词汇完整，实现补全留到阶段 4。
 
 **R1 终态不可变**：任务一旦终态即事实，不可重开。要改就**新建 revision 任务并 `refs` 引用原 task_id**。
 → 这同时替掉了现有「回退复用原会话」的脆弱设计：返工上下文靠 handoff 落盘，会话丢了也不断链。
 
 ---
 
-## 5. 验收与轮次不变式（服务端强制）
+## 5. 验收与轮次不变式（服务端强制，R4/R5 未实现）
 
 现有 `error-handling.md` 的三条规则藏在文档里，靠 agent 记住**不可靠**。全部下沉为 server 端不变式。
 
@@ -221,6 +233,10 @@ A2A 的 `TaskState` 分三类，我们照抄分类，并补两个它没有的状
 
 > 这是一条**容易忘、忘了就失去循环边界**的规则，必须由 server 保证。
 
+**服务端实现（v0.2）**：客户端只能报 `cp`（`CP1`/`CP2.1`/`CP2.2`/`CP3`/`CP4`/`CP5`/`3.4`），
+**slot 由 server 按下表查出**；`op` 从 `refs[0]` 指向的原任务取，忽略入参；且只能对自己相关的任务开 revision。
+否则「改一个字符串就重置轮次」——那只是把自然语言挪进了参数里（见 ADR 0008）。
+
 ```
 revision 任务创建时按语义归属确定 slot：
   CP1 不通过            → slot=design
@@ -235,16 +251,19 @@ slot.round += 1
 if slot.round > limit: → LOOP_EXHAUSTED（拒绝创建，落盘证据，暂停待人工决策）
 ```
 
-### 5.3 R3 硬门槛不得由验收方自行放宽
+### 5.3 R3 硬门槛不得由验收方自行放宽（实现为独立动作 `space_task_accept`）
 
 需求级硬门槛（性能目标、精度标准）只能由 `human` 决策放宽：
 
 - 验收方（QA）可给出「建议按已知限制收口」+ 完整依据，**无权自行放行**。
 - 收口依据必须含：量化差距、实现级优化穷尽证据（已落地 + 负结果）、设计方向与实测矛盾的证据。
 - 依据不全 → server 拒绝 `accept`，按阻断处理。
+- **服务端实现（v0.2）**：`space_task_accept({task_id, verdict, cp, gaps[], evidence{quantified_gap, exhausted_optimizations, design_contradiction}})`
+  - `verdict=relax` 只有 `human` 能签，且三类证据缺一即 `EVIDENCE_INSUFFICIENT`；
+  - **agent 侧没有放宽入口**：原先靠 `payload.relax_hard_gate === true` 自报的写法已删除。
 - 静默模式下的收口标记 `pending_user_review`，**是待复核决策，不是定案**。
 
-### 5.4 R4 杠杆评估门（性能未达标前置）
+### 5.4 R4 杠杆评估门（性能未达标前置，**v0.2 未实现**）
 
 性能未达标时，回退前先判「是否还有与实测瓶颈匹配、且未被证伪的实质杠杆」：
 
@@ -255,7 +274,7 @@ if slot.round > limit: → LOOP_EXHAUSTED（拒绝创建，落盘证据，暂停
 
 目的：截断「明知无收益仍重走整条复验链」的空转——轮次上限只能限次数，限不了单轮浪费。
 
-### 5.5 R5 修改不越权
+### 5.5 R5 修改不越权（**v0.2 未实现**）
 
 执行角色可定位、给根因证据，但**不得自行变更上游设计决策**（架构/Tiling/切分/接口）。
 代码架构是用户在 CP1 拍板的，architect 亦不得自行改选，须回退 1.1 由人重新拍板。
@@ -320,22 +339,26 @@ server 派活给 dev-hw
 
 命名以 `space_` 前缀。本地走 MCP over **stdio**；远程走 MCP over **HTTP**（带 token）。选 MCP 的理由：跨 runtime 兼容性远好于 hook（部分 CLI 无 hook）。
 
-| tool | 入参（要点） | 返回 |
-|---|---|---|
-| `space_attach` | `token`, `capabilities[]`（含 `max_block_sec`）, `constitution_version` | `{member, unread_tasks[], constitution_version, cursor}` |
-| `space_detach` | — | `{ok}` |
-| `space_wait` | `since_cursor`, `timeout_sec`（默认 20；server clamp 到 `max_block_sec`） | `{events[], tasks[], cursor, reason, effective_timeout_sec}`（阻塞；顺带续租） |
-| `space_task_create` | `type`, `to` \| `role`, `op`, `step`, `inputs[]`, `expected`, `refs[]`, `priority`, `claims` | `{task_id}` |
-| `space_task_claim` | `task_id`, `lease_sec` | `{lease_id, lease_until}` \| `TASK_ALREADY_CLAIMED` |
-| `space_task_heartbeat` | `lease_id` | `{lease_until}` |
-| `space_task_transition` | `task_id`, `lease_id`, `to`, `payload` | `{state}` |
-| `space_task_list` | `filter{op,state,to,role}` | `{tasks[]}` |
-| `space_publish` | `uri`, `sha256`, `size`, `media_type`, `meta` | `{artifact_id}`（**只登记引用**） |
-| `space_artifact_resolve` | `artifact_id` | `{uri, sha256, size}`（**不返字节**） |
-| `space_msg_send` | `to` \| `topic`, `text`, `refs[]` | `{msg_id}`（**不落盘归档**） |
-| `space_state_get` | `op` | `state`（server 归约结果，只读） |
-| `space_resource_acquire` | `name`（如 `fpga:0`）, `lease_sec` | `{lease_id}` \| `RESOURCE_BUSY` |
-| `space_resource_release` | `lease_id` | `{ok}` |
+| tool | 入参（要点） | 返回 | 备注 |
+|---|---|---|---|
+| `space_attach` | `capabilities{max_block_sec}`（server 收口到 ≤300）, `constitution_version` | `{member, constitution_version, cursor, unread_tasks[], hint}` | token 是**进程启动参数**，不是入参 |
+| `space_detach` | — | `{ok}` | |
+| `space_wait` | `since_cursor`, `timeout_sec`（默认 20；clamp 到 `max_block_sec` 与 300） | `{reason: events\|timeout, cursor, events[], tasks[], effective_timeout_sec}` | 超时是正常返回；`notifications/cancelled` 会中止 handler |
+| `space_task_create` | `type`, `to` \| `role`, `op`（revision 时忽略）, `step`, `cp`（revision 必填）, `inputs[]`, `expected`, `refs[]`, `claims`（v0.2 只支持 1） | `{task_id, slot_round, state}` | revision 的 op/slot 由 server 定 |
+| `space_task_claim` | `task_id`, `lease_sec`（≤3600） | `{lease_id, lease_until, state, idempotent?}` | 重试同一成员返回原租约（幂等） |
+| `space_task_heartbeat` | `lease_id` | `{lease_until}` | 事务内 + owner/lease 谓词 |
+| `space_task_transition` | `task_id`, `lease_id`, `to`, `payload{handoff{uri,sha256,size}, reason, question_task_id}` | `{task_id, state, idempotent?}` | `→DONE` 必须 handoff；`→PENDING` 释放租约 |
+| `space_task_accept` | `task_id`, `verdict: pass\|hold\|relax`, `cp`, `gaps[]`, `evidence{quantified_gap, exhausted_optimizations, design_contradiction}` | `{task_id, verdict, by, relaxed}` | **R3**：只有 human 能 relax |
+| `space_task_list` | `filter{op,state,to,role}` | `{tasks[]}`（已按可见性过滤） | |
+| `space_publish` | `uri`, `sha256`, `size`, `media_type`, `task_id`, `meta` | `{artifact_id}` | 只登记引用，不传字节 |
+| `space_artifact_resolve` | `artifact_id`（或 uri） | `{uri, sha256, size, media_type, by}` | 需可见性；不返字节 |
+| `space_msg_send` | `to` \| `topic`（**二选一**）, `text`（≤1000 字符）, `refs[]` | `{msg_id}` | 落 `messages` 表 + `message.sent` 事件（不归档、无 TTL，待阶段 4） |
+| `space_state_get` | `op`（可选） | `{op, slots{}, tasks[], artifacts[]}`（已按可见性过滤） | 只读归约结果 |
+| `space_resource_acquire` | `name`（如 `fpga:0`）, `lease_sec`（≤3600） | `{lease_id, lease_until}` \| `RESOURCE_BUSY` | 无心跳、无自动回收（阶段 4） |
+| `space_resource_release` | `lease_id` | `{ok}` | 归属校验 |
+| `space_verify` | — | `{ok, drift[]}` | 调试用：投影 vs 事件归约 |
+
+> 表外无工具。每行都对应 `src/space/mcp.mjs` 的一个 `TOOL_SCOPES`/`HANDLERS` 条目；新增工具必须先在这张表和 scope 表里出现。
 
 ### 7.1 任务类型（`type`）
 
@@ -423,8 +446,9 @@ A2A 是**点对点**的（Client↔Server，无中央 broker）；房间/成员/
 
 | code | 含义 |
 |---|---|
-| `TOKEN_INVALID` / `TOKEN_REVOKED` | 身份无效 / 已吊销 |
-| `NOT_MEMBER` | 非空间成员 |
+| `TOKEN_INVALID` / `TOKEN_REVOKED` | 身份无效 / 已吊销（过期走同一路径） |
+| `NOT_MEMBER` | 收件人不是空间成员（`space_msg_send` 的 to 校验） |
+| `NOT_ATTACHED` | 未 `space_attach` 就调用其它工具 |
 | `CONSTITUTION_OUTDATED` | 遵守的宪法版本过旧，须先升级 |
 | `FORBIDDEN_ROLE` | 角色无权执行该操作（如非 human 放宽硬门槛） |
 | `TASK_NOT_FOUND` | 任务不存在 |
@@ -436,7 +460,10 @@ A2A 是**点对点**的（Client↔Server，无中央 broker）；房间/成员/
 | `EVIDENCE_INSUFFICIENT` | 收口/失败证据不全 |
 | `RESOURCE_BUSY` | 资源被占 |
 | `BUDGET_EXCEEDED` | 预算熔断 |
-| `ARTIFACT_MISSING` | 引用的制品不存在 |
+| `ARTIFACT_MISSING` | 引用的制品不存在，或不由本人为本人任务登记 |
+| `UNKNOWN_TOOL` | 工具名不存在（MCP 层） |
+| `CANCELLED` | 调用被客户端取消（人插话打断），**不返回响应** |
+| `INTERNAL` | 未归类的服务端错误（出现即 bug，不应作为正常路径） |
 
 ---
 
@@ -461,6 +488,9 @@ slots(op, slot, round)                                -- R2 的载体
 
 - `events.id` 同时是 `wait` 的游标：`attach` 返回当前最大 id，`wait(since_cursor)` 从这个 id 往后读。
 - 预算表（`budget`）**尚未实现**，`BUDGET_EXCEEDED` 是预留错误码。
+- `tasks.claims_count` 是**当前活跃认领数**（回到 `PENDING` 必须归零）；重试预算由 `attempts` 单独承担（ADR 0008）。
+  v0.2 只支持 `claims_max = 1`，多成员竞争消费留到阶段 4（需要 `task_claims` 表）。
+- `resources` **没有心跳也没有自动回收**：租约到期即失效，长任务会中途静默失去独占（阶段 4）。
 
 ---
 

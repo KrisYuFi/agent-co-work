@@ -10,6 +10,55 @@
 
 ---
 
+## [0.3.1] - 2026-10-28
+
+**修正一次假绿灯：阶段 2 曾被错误标为「已完成」。**
+
+四个独立 subagent（不变式 / 协议一致性 / 安全并发 / 测试有效性）在互不共享上下文的情况下审计，
+结论一致：*机制的外壳是真的，不变式的内部是空的*。核心证据是变异测试——把 19 处实现逐个改坏，
+**9 处仍 25/25 全绿**；把「人插话」这一步整个删掉，测试照样通过。
+
+### Fixed（两个 100% 命中的 P0）
+
+- **回收死锁**：`claims_count` 作为终身计数从不回退 → 一次租约过期或一次吊销，任务就停在 `PENDING` 但谁都认领不了；`attempts` 不再增长，`FAILED` 升级永不到达。改为「当前活跃认领数」（回 `PENDING` 归零），重试预算只由 `attempts` 承担
+- **回收破坏 R1**：`sweepExpired` 的 `select` 在事务外、`UPDATE` 无守卫 → 能把刚提交的 `DONE` 复活成 `PENDING`，也能覆盖别人刚认领的租约。改为事务内判决 + `state/lease_until` 守卫 + SQL 自增
+- **R2 是参数不是机制**：`slot`/`op`/`type` 全由客户端给，改个字符串就重置轮次。改为客户端只报 `cp`、server 查表定 `slot`、`op` 取自 `refs[0]` 的原任务、只能对自己可见的任务开 revision
+- **R3 是自报**：`payload.relax_hard_gate === true` 由被约束方自己填。删除该通道，改为 `space_task_accept`（只有 human 能 relax，且三类证据缺一即拒）
+- **吊销后任务仍卡死**：回收时同步改派给该成员的角色；token 过期走同一路径；新增 `space token unrevoke`
+
+### Fixed（安全与并发）
+
+- `task_heartbeat` 无事务无谓词 → 能把别人刚拿到的 300s 租约砍成 2s。改为事务内 + `owner/lease_id` 谓词
+- `lease_sec` / `max_block_sec` 无上限（`1e9` 让任务 31 年不可回收；`NaN` 让 `wait` 永不返回）→ 收口到 3600 / 300 且拒绝非有限数
+- 消息 `to` + `topic` 并存 = 私聊全员可见；`text` 无上限（一次 `wait` 返回 200MB）→ 二选一 + 1000 字符上限
+- 未 `attach` 就能使用其它工具（宪法版本门形同不存在）→ `NOT_ATTACHED`
+- 读侧无可见性、scope 只覆盖 4 个工具 → 可见性过滤 + `TOOL_SCOPES` 表化
+- `SPACE_TOKEN` 静默覆盖 `--token-file`（身份混淆）→ 显式参数优先并告警
+- 未知工具返回 `TASK_NOT_FOUND`（误导排障）→ `UNKNOWN_TOOL`
+
+### Changed
+
+- **协议**：§2.2 标注路径级 ACL 未实现；§2.3 attach 成为硬前置；§4.2 补中断态出边与回收语义、标注 `REJECTED`/`EXPIRED` 缺口；§5 R2/R3 改为服务端确定归属、R4/R5 标注未实现；**§7 按实现重写接口表（16 个工具）**；§11 补 4 个真实错误码；§12 说明 claims 语义
+- **验收**：`test/acceptance.mjs` 从 25 条重写为 **55 条**，每条都能说清「哪个缺陷会让它变红」；关键结论直查 sqlite；新增对账器负向测试、租约回收后可再认领、未 attach 被拒、scope 生效、`max_block_sec` 生效等回归
+- **e2e**：用 `attach` 返回的游标（不再 `since_cursor:0`）、产物真实落盘并校验 sha256/size、断言同一任务的状态链；agent 自述降级为旁证
+- **ROADMAP**：阶段 2 的通过标准改为逐条标注**证据强度**，并记下这次误判
+- **ADR**：[0008](docs/decisions/0008-reclaim-semantics-and-mechanism-integrity.md) 回收语义与机制完整性；[0009](docs/decisions/0009-verification-must-be-mutation-tested.md) 验收必须做变异测试
+
+### 验收
+
+| 项 | 证据 | 结果 |
+|---|---|---|
+| 假成员验收 | 55 条断言（含 12 条安全回归） | 55/55 |
+| 真实 runtime e2e | opencode(dev-code) + DSH(pm)，同任务状态链 + 产物 sha 校验 | 9/9 |
+| 变异测试 | 13 个变异 | 11 个被杀死（存活 2 个是双重防护） |
+
+### Notes
+
+- **仍未实现**：R4/R5、预算熔断、路径级写 ACL、`claims_max > 1`（显式拒绝）、资源租约心跳与回收、消息 TTL、变异测试进 CI
+- 这轮的教训写进了 AGENTS.md 的提交前自检：涉及不变式的改动，必须说清哪个断言会变红
+
+---
+
 ## [0.3.0] - 2026-10-28
 
 **阶段 2 完成：最小原型跑通。真实 agent（opencode + DSH）端到端 8/8，假成员验收 25/25。**
