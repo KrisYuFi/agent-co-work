@@ -70,6 +70,19 @@ ROADMAP 阶段 4 那条「杀掉任意成员，任务自动回队并被重新认
 - **`wait` 就是 POST 长轮询**，服务器把 `requestTimeout` 设为 0，不让 HTTP 层先掐断
 - `GET /mcp` 回 405：声明不支持服务端主动推送（探针实测 opencode 能容忍；要服务端事件推送时才需要实现 SSE）
 
+## 容器也可以当「没有 agent 的机器」
+
+`member.py` 有个 `runner` 角色：它不调模型，只在容器里跑环境检查（`npu-smi` / CANN 目录 / 编译工具），
+把结果写成 `env-info.md` 交回空间。用法见 `test/multimachine-design.mjs`：
+
+```
+0 环境准备（容器里的 runner，无 agent）
+1.1 需求分析 / 2.1 测试方案 / 2.2 开发方案（宿主上的真实 agent）
+CP1 / CP2.1 / CP2.2（宿主上的 QA agent）+ 人工确认
+```
+
+这对应你原本的现场：**编码容器是一台机器，agent 会话可以不在它里面**。
+
 ## 还没做的
 
 - **真实 agent 进容器**：需要镜像里有 opencode/dsh（本机无 node 镜像，暂时做不到）。当前容器成员是脚本。

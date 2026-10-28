@@ -2,6 +2,45 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。当前处于**设计阶段**，版本号用于标记设计与协议的里程碑。
 
+## [0.6.0] - 2026-10-28
+
+**设计段在多机形态下跑通：3 个真实 agent（宿主）+ 1 台没有 agent 的机器（CANN 容器）。**
+
+### Added
+
+- **`test/multimachine-design.mjs`** — hub 在宿主，`pm/architect/qa` 三个真实 agent 走 HTTP，
+  外加一个 **CANN 容器**成员承担阶段 0「环境检查」（容器里没有 agent，只有脚本）
+- **`test/hub-restart.mjs`** — hub 重启恢复：在飞 wait 被打断 → 免 attach 继续 → 未读任务补投
+- `member.py` 新增 `runner` 角色：在容器里跑 `npu-smi` / CANN 目录 / 编译工具检查，产出 `env-info.md`
+
+### Changed
+
+- **`attach` 状态落库**（`members.attached_at`，老库自动 ALTER 补列）。原来在 hub 进程内存里，
+  重启就丢——而「hub 会重启、网络会断」在跨机器场景下是常态。落库后同一 token 重启可直接续用，
+  `attach` 的 `unread_tasks` 成为「离线期间攒下的任务」的补投通道
+
+### 验证
+
+| 实验 | 结果 |
+|---|---|
+| 多机跑完设计段（0 → CP2.2） | **10/10**，1447s |
+| 交付件 | 8 份（需求 3 版 / 测试方案 / 开发方案 / 4 份 CP 报告） |
+| 产物来源分布 | architect 4 · qa 4 · **runner 1（容器里产的）** |
+| CP1 人工打回 → revision → 复核 | ✅ `slots.design.round = 1` |
+| hub 重启恢复 | **7/7** |
+
+### Notes（这次跑出来的真问题）
+
+- **5 分钟租约对设计工作太短**：QA 复核一份 30KB 开发方案花了 5 分多钟，租约中途过期，
+  任务被判 `EXPIRED → PENDING`，QA 自己重新认领后才完成（trace 可见）。
+  本次自愈了，但换个场景就是**两个成员同时干同一件事**。agent 在「干活」期间不会心跳——
+  要么把 lease 调长，要么让客户端定期 heartbeat，或者服务端按任务类型给不同租约预算
+- 多机比单机慢（1447s vs 1555s 其实相当），但 3 个 agent + 容器 + 人同时在线，
+  对 5 核 / 7GB 的机器压力不小
+- 容器里的 runner 做完一个任务就退出：真实形态下它应该是常驻服务或按需拉起（D 档）
+
+---
+
 ## [0.5.0] - 2026-10-28
 
 **中心化 hub + 跨机器验证。**「所有成员连到一台服务器上的协作空间」这个形态跑通了，并且做出了同机测试做不到的实验。

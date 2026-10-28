@@ -5,7 +5,13 @@
 | 脚本 | 用什么当成员 | 验什么 | 耗时 | 成本 |
 |---|---|---|---|---|
 | `acceptance.mjs` | 脚本直说 MCP 的假成员 ×5+ | 骨架、不变式、越权、吊销、插话、回收、对账 | ~40s | 0 |
-| `e2e-real.mjs` | **真实 agent**：opencode + DSH 各一个会话 | 模型能不能照着空间协议把活干完（含同任务状态链与产物 sha 校验） | 1–3 min | 两次模型会话 |
+| `e2e-real.mjs` | **真实 agent**：opencode + DSH 各一个会话（stdio） | 模型能不能照着空间协议把活干完（含同任务状态链与产物 sha 校验） | 1–3 min | 两次模型会话 |
+| `hub-e2e.mjs` | 两个真实 agent 走 **HTTP hub** | 中心化传输：attach → 派活 → 认领 → 产物 → handoff | ~1 min | 两次模型会话 |
+| `hub-restart.mjs` | 两个脚本成员 | **hub 重启**：在飞 wait 被打断 → 免 attach 继续 → 未读任务补投 | ~15s | 0 |
+| `multimachine-design.mjs` | 三个真实 agent（宿主）+ **CANN 容器**（无 agent） | ops-direct-invoke 设计段跨机器跑：容器做阶段 0 环境检查 | ~30 min | 三次模型会话 |
+
+传输有两条：**stdio**（本机开发，一个成员一个进程）与 **HTTP hub**（跨机器，所有成员连一台服务器）。
+`acceptance.mjs` / `e2e-real.mjs` 走 stdio，其余走 hub。
 
 ```bash
 node test/acceptance.mjs          # 55 项，全离线
