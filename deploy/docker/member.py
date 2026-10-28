@@ -57,7 +57,7 @@ def tool(url, token, name, args=None):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--role", required=True, choices=["pm", "crash", "finish"])
+    ap.add_argument("--role", required=True, choices=["pm", "crash", "finish", "runner"])
     ap.add_argument("--url", required=True)
     ap.add_argument("--token-file", required=True)
     ap.add_argument("--artifacts", default="/artifacts")
@@ -111,6 +111,69 @@ def main():
             log("holding… (this container is about to be killed)")
             time.sleep(600)
             continue
+
+        if role == "runner":
+            # 阶段 0：环境检查。这台「机器」没有 agent，只有一段脚本——
+            # 正好对应真实场景里「连 NPU 的那台机器 / 那个容器」。
+            import platform
+            import subprocess
+
+            def run(cmd):
+                try:
+                    out = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=20)
+                    return (out.stdout or out.stderr).strip()[:600] or "(空输出)"
+                except Exception as exc:  # noqa: BLE001
+                    return f"(执行失败: {exc})"
+
+            report = [
+                "# 环境信息（由容器内的 runner 采集）",
+                "",
+                f"- 采集时间：{time.strftime('%FT%TZ')}",
+                f"- 主机：{platform.node()} / {platform.system()} {platform.release()}",
+                f"- Python：{platform.python_version()}",
+                "",
+                "## NPU",
+                "```",
+                run("npu-smi info 2>&1 | head -20 || echo 'npu-smi 不可用'"),
+                "```",
+                "",
+                "## CANN",
+                "```",
+                run("ls -d /usr/local/Ascend/ascend-toolkit/latest 2>/dev/null || echo '未找到 CANN 安装目录'; echo \"ASCEND_HOME=${ASCEND_HOME:-未设置}\"".replace('\\"', '"')),
+                "```",
+                "",
+                "## 构建工具",
+                "```",
+                run("cmake --version 2>/dev/null | head -1 || echo 'no cmake'; gcc --version 2>/dev/null | head -1 || echo 'no gcc'; nproc"),
+                "```",
+                "",
+                "## 结论",
+                "本机为容器环境：可完成编译类工作；**无 NPU 设备**（npu-smi 不可用），"
+                "联调与性能验收需在带板卡的机器上进行。",
+                "",
+            ]
+            text = "\n".join(report)
+            uri = "artifacts/env-info.md"
+            path = os.path.join(args.artifacts, "env-info.md")
+            with open(path, "w") as f:
+                f.write(text)
+            body = text.encode()
+            sha = hashlib.sha256(body).hexdigest()
+            size = os.path.getsize(path)
+            tool(args.url, token, "space_publish", {"uri": uri, "sha256": sha, "size": size, "media_type": "text/markdown", "task_id": task_id})
+            tool(
+                args.url,
+                token,
+                "space_task_transition",
+                {
+                    "task_id": task_id,
+                    "lease_id": claim["lease_id"],
+                    "to": "DONE",
+                    "payload": {"handoff": {"uri": uri, "sha256": sha, "size": size}, "reason": "环境检查完成（容器内）"},
+                },
+            )
+            print(f"RUNNER_DONE {task_id}")
+            return 0
 
         uri = f"artifacts/kernel-{role}.cu"
         path = os.path.join(args.artifacts, os.path.basename(uri))

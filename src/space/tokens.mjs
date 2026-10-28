@@ -66,6 +66,7 @@ export function authenticate(db, token) {
     scopes: JSON.parse(row.scopes || '[]'),
     token_prefix: row.prefix,
     capabilities: JSON.parse(member.capabilities || '{}'),
+    attached_at: member.attached_at ?? null,
   }
 }
 

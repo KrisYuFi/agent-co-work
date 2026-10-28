@@ -175,7 +175,10 @@ function assertAttached(member) {
  */
 function assertReady(ctx) {
   assertAttached(ctx.member)
-  if (ctx.session && !ctx.session.attached) {
+  // 以**库**为准：attach 状态落在 members.attached_at 上，所以 hub 重启后成员不必重新 attach，
+  // 只要用同一个 token 继续调用即可（跨机器断开重连的常态）
+  const attached = ctx.member.attached_at ?? (ctx.session?.attached ? Date.now() : null)
+  if (!attached) {
     throw new SpaceError('NOT_ATTACHED', 'call space_attach first（宪法版本与 capabilities 要在这一步上报）')
   }
 }
@@ -210,7 +213,8 @@ export async function attach(ctx, args = {}) {
   }
   if (ctx.session) ctx.session.attached = true
   txn(db, () => {
-    db.prepare('update members set last_seen_at = ?, capabilities = ? where id = ?').run(
+    db.prepare('update members set last_seen_at = ?, attached_at = ?, capabilities = ? where id = ?').run(
+      Date.now(),
       Date.now(),
       JSON.stringify(capabilities),
       member.id,
@@ -242,7 +246,10 @@ export async function detach(ctx) {
   const { db, member } = ctx
   assertReady(ctx)
   if (ctx.session) ctx.session.attached = false
-  txn(db, () => appendEvent(db, { kind: 'member.detached', memberId: member.id, payload: {} }))
+  txn(db, () => {
+    db.prepare('update members set attached_at = null where id = ?').run(member.id)
+    appendEvent(db, { kind: 'member.detached', memberId: member.id, payload: {} })
+  })
   return { ok: true }
 }
 

@@ -31,7 +31,8 @@ create table if not exists members (
   capabilities  text not null default '{}',     -- { max_block_sec, ... }
   status        text not null default 'active', -- active | revoked
   created_at    integer not null,
-  last_seen_at  integer
+  last_seen_at  integer,
+  attached_at   integer                       -- 落库：hub 重启后成员重连不必重新 attach
 );
 
 -- 身份：只存哈希（ADR 0007）
@@ -141,6 +142,9 @@ export function openDb(spaceDir, { create = false } = {}) {
   db.exec('PRAGMA busy_timeout = 5000')
   db.exec('PRAGMA synchronous = NORMAL')
   db.exec(SCHEMA)
+  // 老库补列（原型阶段没有迁移框架，用 pragma 判一下即可）
+  const cols = db.prepare("select name from pragma_table_info('members')").all().map((r) => r.name)
+  if (!cols.includes('attached_at')) db.exec('alter table members add column attached_at integer')
   if (!metaGet(db, 'schema_version')) {
     metaSet(db, 'schema_version', String(SCHEMA_VERSION))
     metaSet(db, 'constitution_version', '1')
