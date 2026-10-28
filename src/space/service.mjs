@@ -512,7 +512,9 @@ export async function taskTransition(ctx, args = {}) {
 
   // 各分支的附加约束（协议 §4.2 / §5）
   let handoff = null
-  if (to === 'DONE') {
+  // handoff 是「交付件」的要求；question / answer / notice 是人机问答，不产出文件
+  const needsHandoff = ['assign', 'revision', 'broadcast'].includes(task.type)
+  if (to === 'DONE' && needsHandoff) {
     handoff = assertHandoff(payload)
     const art = db
       .prepare('select id, by_member, task_id, size from artifacts where uri = ? and sha256 = ?')

@@ -2,6 +2,39 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。当前处于**设计阶段**，版本号用于标记设计与协议的里程碑。
 
+## [0.4.0] - 2026-10-28
+
+**第一次用真实 agent 跑通 ops-direct-invoke 的「需求 → 设计 → 设计 review」段。**
+
+### Added
+
+- **`examples/ops-direct-invoke/`** — 把 cannbot-skills 的 `ops-direct-invoke` 映射进空间：
+  - `roles/`：architect / qa / human 三个角色的空间版职责（承接原 agent 定义，补上空间协议）
+  - `run-design.mjs`：1.1 → CP1 → 2.1 → CP2.1 → 2.2 → CP2.2，含一次 CP1 打回与修订
+  - `README.md`：映射表、边界、第一次实跑结果与四个问题
+
+### 实跑结果
+
+`architect=dsh` + `qa=opencode` 两个真实会话并发，PM 与 human 由脚本驱动：
+
+- 68 条事件 / 11 个任务 / **8 份真实交付件**（需求 34.9KB + 修订版 45.8KB、测试方案 24.7KB、开发方案 27.5KB、4 份验收报告）
+- CP1 被人工打回 → `revision` 任务 → architect 按意见修订 → CP1 复核通过
+- `slots.design.round = 1`：跨环节回退计入 design 槽
+- `space verify` 通过（投影 == 事件归约）
+
+### Fixed
+
+- `space_verify` 的假阳性：人答问卷（`question` 类任务）的 DONE 不再被要求 handoff（只对产出交付件的任务必填）
+
+### Notes（这次跑出来的问题，都还没修）
+
+- opencode 的 `permission.external_directory` 会挡住跨目录读产物 → 非交互模式下 auto-reject，任务卡在 WORKING
+- 编排方（PM 脚本）没有尊重 QA 的 `hold` 判定就继续往下走 —— 机制记下了 verdict，编排逻辑忽略了它
+- headless agent 有空闲轮次预算，PM 下发慢就会自己收工
+- 仍是同机共享 sqlite；中心化 hub + HTTP 未做
+
+---
+
 ## [Unreleased]
 
 ### Planned（阶段 3：接入一个真实环节）

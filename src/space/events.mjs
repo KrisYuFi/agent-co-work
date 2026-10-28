@@ -100,7 +100,7 @@ export function reduceTask(events) {
  * 这是「可重放」这条设计承诺的可执行形式，不是口号。
  */
 export function verifyProjection(db) {
-  const tasks = db.prepare('select id, state, attempts, handoff_uri, handoff_sha from tasks').all()
+  const tasks = db.prepare('select id, type, state, attempts, handoff_uri, handoff_sha from tasks').all()
   const drift = []
   for (const t of tasks) {
     const reduced = reduceTask(taskEvents(db, t.id))
@@ -119,8 +119,10 @@ export function verifyProjection(db) {
       drift.push({ task_id: t.id, kind: 'terminal_mutated', projected: t.state, reduced: reduced.state })
     }
 
-    // handoff 交链：投影行 == 事件里的 handoff == 制品登记
-    if (t.state === 'DONE') {
+    // handoff 交链：投影行 == 事件里的 handoff == 制品登记。
+    // 只对「产出交付件」的任务要求 handoff；question/answer/notice 是人机问答，本来就没有文件
+    const needsHandoff = ['assign', 'revision', 'broadcast'].includes(t.type)
+    if (t.state === 'DONE' && needsHandoff) {
       const h = reduced.handoff
       if (!h) {
         drift.push({ task_id: t.id, kind: 'handoff_missing_in_events' })
