@@ -60,7 +60,15 @@ export function taskEvents(db, taskId) {
 export function reduceTask(events) {
   let state = null
   let attempts = 0
+  let handoff = null
+  let terminalAt = null
+  let terminalMutated = false
+  const TERMINAL = new Set(['DONE', 'FAILED', 'REJECTED', 'CANCELED'])
+
   for (const e of events) {
+    if (terminalAt !== null && ['task.claimed', 'task.transitioned', 'task.expired', 'task.requeued'].includes(e.kind)) {
+      terminalMutated = true // 终态之后还有状态类事件 —— R1 被破坏
+    }
     switch (e.kind) {
       case 'task.created':
         state = 'PENDING'
@@ -70,19 +78,21 @@ export function reduceTask(events) {
         break
       case 'task.transitioned':
         state = e.payload?.to ?? state
+        if (e.payload?.handoff) handoff = e.payload.handoff
         break
       case 'task.expired':
         attempts += 1
         state = e.payload?.to ?? 'PENDING'
         break
-      case 'task.requeued': // 吊销 / token 失效导致的任务回收
+      case 'task.requeued':
         state = 'PENDING'
         break
       default:
         break
     }
+    if (TERMINAL.has(state)) terminalAt ??= e.id
   }
-  return { state, attempts }
+  return { state, attempts, handoff, terminalMutated }
 }
 
 /**
@@ -90,12 +100,41 @@ export function reduceTask(events) {
  * 这是「可重放」这条设计承诺的可执行形式，不是口号。
  */
 export function verifyProjection(db) {
-  const tasks = db.prepare('select id, state, attempts from tasks').all()
+  const tasks = db.prepare('select id, state, attempts, handoff_uri, handoff_sha from tasks').all()
   const drift = []
   for (const t of tasks) {
     const reduced = reduceTask(taskEvents(db, t.id))
+
     if (reduced.state !== t.state || reduced.attempts !== t.attempts) {
-      drift.push({ task_id: t.id, projected: { state: t.state, attempts: t.attempts }, reduced })
+      drift.push({
+        task_id: t.id,
+        kind: 'state_or_attempts',
+        projected: { state: t.state, attempts: t.attempts },
+        reduced: { state: reduced.state, attempts: reduced.attempts },
+      })
+    }
+
+    // 终态之后仍有状态事件 —— 服务器自己的回收逻辑曾打破过 R1（ADR 0008 的修复点）
+    if (reduced.terminalMutated) {
+      drift.push({ task_id: t.id, kind: 'terminal_mutated', projected: t.state, reduced: reduced.state })
+    }
+
+    // handoff 交链：投影行 == 事件里的 handoff == 制品登记
+    if (t.state === 'DONE') {
+      const h = reduced.handoff
+      if (!h) {
+        drift.push({ task_id: t.id, kind: 'handoff_missing_in_events' })
+      } else if (h.uri !== t.handoff_uri || h.sha256 !== t.handoff_sha) {
+        drift.push({
+          task_id: t.id,
+          kind: 'handoff_mismatch',
+          projected: { uri: t.handoff_uri, sha256: t.handoff_sha },
+          reduced: h,
+        })
+      } else {
+        const art = db.prepare('select uri, sha256 from artifacts where uri = ? and sha256 = ?').get(h.uri, h.sha256)
+        if (!art) drift.push({ task_id: t.id, kind: 'handoff_artifact_missing', reduced: h })
+      }
     }
   }
   return drift

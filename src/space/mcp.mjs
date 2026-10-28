@@ -38,19 +38,19 @@ export const TOOLS = [
   {
     name: 'space_task_create',
     description:
-      'Create a task. type=assign needs `to`; broadcast needs `role` (broadcast does NOT trigger work — the receiver must claim); revision needs `slot` + refs to the original task.',
+      'Create a task. type=assign needs `to`; broadcast needs `role` (broadcast does NOT trigger work — the receiver must claim); revision needs refs[0]=original task id AND cp — the server derives op and slot itself, so rounds cannot be reset by renaming anything.',
     inputSchema: obj(
       {
         type: { type: 'string', enum: ['assign', 'broadcast', 'revision', 'question', 'answer', 'notice'] },
         to: str('target member id'),
         role: str('target role'),
-        op: str('operator name (算子)'),
+        op: str('operator name (算子); ignored for revision (taken from the original task)'),
         step: str('workflow step label'),
-        slot: { type: 'string', enum: ['design', 'joint_debug', 'acceptance'] },
+        cp: { type: 'string', enum: ['CP1', 'CP2.1', 'CP2.2', 'CP3', 'CP4', 'CP5', '3.4'], description: 'revision only: which checkpoint failed; server maps it to a slot' },
         inputs: arr('input refs'),
         expected: obj(),
-        refs: arr('referenced task/artifact ids'),
-        claims: num('max concurrent claims (default 1)'),
+        refs: arr('referenced task ids; refs[0] = original task for revision'),
+        claims: num('concurrent claim slots (default 1)'),
       },
       ['op'],
     ),
@@ -88,6 +88,21 @@ export const TOOLS = [
     description: 'Register an artifact REFERENCE (uri + sha256 + size). Never sends bytes.',
     inputSchema: obj({ uri: str('artifact uri / path'), sha256: str('content hash'), size: num(''), media_type: str(''), task_id: str('owning task'), meta: obj() }, ['uri', 'sha256']),
   },
+  {
+    name: 'space_task_accept',
+    description:
+      'R3: judge/accept a work product. verdict=relax (loosen a REQUIRED hard gate) is allowed ONLY for human members and requires all three evidence fields. Agents cannot relax hard gates.',
+    inputSchema: obj(
+      {
+        task_id: str('task id'),
+        cp: str('checkpoint name, e.g. CP3'),
+        verdict: { type: 'string', enum: ['pass', 'hold', 'relax'] },
+        gaps: arr('quantified gaps'),
+        evidence: obj({ quantified_gap: str(''), exhausted_optimizations: str(''), design_contradiction: str('') }),
+      },
+      ['task_id', 'verdict'],
+    ),
+  },
   { name: 'space_artifact_resolve', description: 'Resolve an artifact reference to its uri/sha256.', inputSchema: obj({ artifact_id: str('artifact id or uri') }, ['artifact_id']) },
   {
     name: 'space_msg_send',
@@ -100,6 +115,30 @@ export const TOOLS = [
   { name: 'space_verify', description: 'Debug: check the state projection against the event log.', inputSchema: obj() },
 ]
 
+/**
+ * 每个工具声明它需要的 scope（ADR 0009）。
+ * 新加工具必须在这里声明，否则只能靠人记得去 service 里补一行断言——那正是漏洞的来源。
+ * 注意：scope 为空数组的 token 仍视为「全权」（fail-open），这是已知弱默认值，协议 §2.2 已标注。
+ */
+const TOOL_SCOPES = {
+  space_task_create: 'task',
+  space_task_claim: 'task',
+  space_task_heartbeat: 'task',
+  space_task_transition: 'task',
+  space_task_accept: 'judge',
+  space_task_list: 'read',
+  space_publish: 'publish',
+  space_artifact_resolve: 'read',
+  space_msg_send: 'msg',
+  space_state_get: 'read',
+  space_resource_acquire: 'resource',
+  space_resource_release: 'resource',
+  space_verify: 'read',
+  space_wait: 'read',
+  space_attach: null,
+  space_detach: null,
+}
+
 const HANDLERS = {
   space_attach: service.attach,
   space_detach: service.detach,
@@ -110,6 +149,7 @@ const HANDLERS = {
   space_task_transition: service.taskTransition,
   space_task_list: service.taskList,
   space_publish: service.publish,
+  space_task_accept: service.taskAccept,
   space_artifact_resolve: service.artifactResolve,
   space_msg_send: service.msgSend,
   space_state_get: service.stateGet,
@@ -132,13 +172,25 @@ function textResult(payload, isError = false) {
 export function serveStdio(ctx, { name = 'space', version = '0.1.0', onLog = () => {} } = {}) {
   const { db, member } = ctx
 
+  // 在飞的请求：id → AbortController。人插话时 runtime 会发 notifications/cancelled，
+  // 服务端必须**真的停手**——否则被放弃的 wait 会跑满 deadline，占着 handler（已实测的泄漏）。
+  const inflight = new Map()
+
   async function handle(msg) {
     const { id, method, params } = msg
     const isNotification = id === undefined || id === null
 
     if (isNotification) {
       if (method === 'notifications/initialized') onLog('initialized')
-      else if (method === 'notifications/cancelled') onLog('cancelled (人可能插话打断了工具调用)')
+      else if (method === 'notifications/cancelled') {
+        const rid = params?.requestId
+        const ctl = inflight.get(rid)
+        if (ctl) {
+          ctl.abort()
+          inflight.delete(rid)
+          onLog(`cancelled request ${rid} — handler aborted (人插话)`)
+        } else onLog(`cancelled request ${rid} — not in flight`)
+      }
       return
     }
 
@@ -174,14 +226,31 @@ export function serveStdio(ctx, { name = 'space', version = '0.1.0', onLog = () 
         }
         const fn = HANDLERS[toolName]
         if (!fn) {
-          send({ jsonrpc: '2.0', id, result: textResult({ error: 'TASK_NOT_FOUND', message: `unknown tool ${toolName}` }, true) })
+          send({ jsonrpc: '2.0', id, result: textResult({ error: 'UNKNOWN_TOOL', message: `unknown tool ${toolName}` }, true) })
           return
         }
+        const need = TOOL_SCOPES[toolName]
+        const scopes = ctx.member?.scopes ?? []
+        if (need && scopes.length > 0 && !scopes.includes(need) && !scopes.includes('all')) {
+          onLog(`${toolName} REJECTED FORBIDDEN_ROLE: needs scope ${need} (have ${scopes.join(',')})`)
+          send({ jsonrpc: '2.0', id, result: textResult({ error: 'FORBIDDEN_ROLE', message: `missing scope "${need}"` }, true) })
+          return
+        }
+        const controller = new AbortController()
+        inflight.set(id, controller)
         try {
-          const result = await fn(ctx, params?.arguments ?? {})
+          const result = await fn({ ...ctx, signal: controller.signal }, params?.arguments ?? {})
+          if (controller.signal.aborted) {
+            onLog(`${toolName} aborted before reply (client cancelled)`)
+            return // 客户端已经放弃这次调用，不要再回一条响应
+          }
           onLog(`${toolName} ok`)
           send({ jsonrpc: '2.0', id, result: textResult(result) })
         } catch (err) {
+          if (controller.signal.aborted || err?.code === 'CANCELLED') {
+            onLog(`${toolName} aborted (client cancelled)`)
+            return
+          }
           if (err instanceof SpaceError) {
             onLog(`${toolName} REJECTED ${err.code}: ${err.message}`)
             send({ jsonrpc: '2.0', id, result: textResult({ error: err.code, message: err.message, detail: err.detail ?? null }, true) })
@@ -189,6 +258,8 @@ export function serveStdio(ctx, { name = 'space', version = '0.1.0', onLog = () 
             onLog(`${toolName} ERROR ${err?.message ?? err}`)
             send({ jsonrpc: '2.0', id, result: textResult({ error: 'INTERNAL', message: String(err?.message ?? err) }, true) })
           }
+        } finally {
+          inflight.delete(id)
         }
         return
       }

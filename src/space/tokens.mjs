@@ -8,6 +8,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { SpaceError } from './invariants.mjs'
 import { txn } from './db.mjs'
+import { appendEvent } from './events.mjs'
 
 export const TOKEN_PREFIX = 'spt_'
 
@@ -52,6 +53,8 @@ export function authenticate(db, token) {
   if (!row) throw new SpaceError('TOKEN_INVALID', 'token not recognised')
   if (row.revoked_at) throw new SpaceError('TOKEN_REVOKED', `token revoked at ${new Date(row.revoked_at).toISOString()}`)
   if (row.expires_at && row.expires_at < Date.now()) {
+    // 过期必须走与吊销**同一条**回收路径（ADR 0007），否则任务会卡在过期成员名下
+    revokeMember(db, row.member_id, { appendEvent, reason: 'expired' })
     throw new SpaceError('TOKEN_REVOKED', `token expired at ${new Date(row.expires_at).toISOString()}`)
   }
   const member = db.prepare('select * from members where id = ?').get(row.member_id)
@@ -80,22 +83,71 @@ export function revokeMember(db, memberId, { appendEvent, reason = 'revoked' } =
 
     // 收回租约：CLAIMED / WORKING 回 PENDING
     const held = db
-      .prepare("select id, state from tasks where owner = ? and state in ('CLAIMED','WORKING','WAITING_INPUT','WAITING_AUTH','BLOCKED')")
+      .prepare(
+        "select id, state, to_member from tasks where owner = ? and state in ('CLAIMED','WORKING','WAITING_INPUT','WAITING_AUTH','BLOCKED')",
+      )
       .all(memberId)
+    const revoked = db.prepare('select role from members where id = ?').get(memberId)
     for (const t of held) {
+      // claims_count 必须归零：它是「当前并发认领数」，不清零任务就再也认领不了（ADR 0008）
+      // to_member 也必须改派：否则回收后仍写着已吊销成员，别人照样接不了（换了个形态的卡死）
+      const reassign = t.to_member === memberId
       db.prepare(
-        'update tasks set state = ?, lease_id = null, lease_until = null, owner = null, updated_at = ? where id = ?',
-      ).run('PENDING', now, t.id)
+        `update tasks set state = ?, lease_id = null, lease_until = null, owner = null, claims_count = 0,
+           to_member = case when ? then null else to_member end,
+           role = case when ? then ? else role end,
+           updated_at = ?
+         where id = ?`,
+      ).run('PENDING', reassign ? 1 : 0, reassign ? 1 : 0, revoked?.role ?? null, now, t.id)
       appendEvent?.(db, {
         kind: 'task.requeued',
         taskId: t.id,
         memberId,
-        payload: { reason, from: t.state, to: 'PENDING' },
+        payload: { reason, from: t.state, to: 'PENDING', reassigned_to_role: reassign ? revoked?.role ?? null : null },
       })
     }
+
+    // 还没开工但派给该成员的任务，同样要改派，否则永远没人能领
+    const addressed = db
+      .prepare("select id from tasks where state = 'PENDING' and to_member = ?")
+      .all(memberId)
+    for (const t of addressed) {
+      db.prepare('update tasks set to_member = null, role = ?, updated_at = ? where id = ?').run(
+        revoked?.role ?? null,
+        now,
+        t.id,
+      )
+      appendEvent?.(db, {
+        kind: 'task.requeued',
+        taskId: t.id,
+        memberId,
+        payload: { reason: `${reason}:reassigned`, from: 'PENDING', to: 'PENDING', reassigned_to_role: revoked?.role ?? null },
+      })
+    }
+
     db.prepare('update resources set lease_id = null, member_id = null, until = null where member_id = ?').run(memberId)
-    appendEvent?.(db, { kind: 'token.revoked', memberId, payload: { reason, tokens_revoked: res.changes, tasks_requeued: held.length } })
+    appendEvent?.(db, {
+      kind: 'token.revoked',
+      memberId,
+      payload: { reason, tokens_revoked: res.changes, tasks_requeued: held.length },
+    })
+    // 与 member.detached 同发：ADR 0007 声称「吊销 = 退场」，那就真的退场
+    appendEvent?.(db, { kind: 'member.detached', memberId, payload: { reason } })
     return { tokens_revoked: Number(res.changes), tasks_requeued: held.length }
+  })
+}
+
+/**
+ * 解封：吊销是可恢复的运维动作，不是死刑。
+ * 恢复成员状态 + 清掉该成员所有 token 的 revoked_at（旧 token 仍不复活，需重新签发）。
+ */
+export function unrevokeMember(db, memberId) {
+  return txn(db, () => {
+    const now = Date.now()
+    db.prepare('update members set status = ? where id = ?').run('active', memberId)
+    const res = db.prepare('update tokens set revoked_at = null where member_id = ? and revoked_at is not null').run(memberId)
+    appendEvent(db, { kind: 'token.unrevoked', memberId, payload: { tokens_reactivated: Number(res.changes), at: now } })
+    return { tokens_reactivated: Number(res.changes) }
   })
 }
 

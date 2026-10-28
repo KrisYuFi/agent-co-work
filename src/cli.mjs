@@ -14,7 +14,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { openDb, resolveSpaceDir, metaGet } from './space/db.mjs'
-import { authenticate, issueToken, listTokens, revokeMember } from './space/tokens.mjs'
+import { authenticate, issueToken, listTokens, revokeMember, unrevokeMember } from './space/tokens.mjs'
 import { appendEvent, formatEvent } from './space/events.mjs'
 import { serveStdio } from './space/mcp.mjs'
 import { verify } from './space/service.mjs'
@@ -52,14 +52,22 @@ function parseTtl(text) {
 }
 
 function readToken(args) {
-  if (args.token && args.token !== true) return args.token
-  if (process.env.SPACE_TOKEN) return process.env.SPACE_TOKEN
-  if (args['token-file'] && args['token-file'] !== true) {
-    const p = args['token-file']
-    if (!existsSync(p)) die(`token file not found: ${p}`)
-    return readFileSync(p, 'utf8').trim()
+  const fromArg = args.token && args.token !== true ? args.token : null
+  const fromFile = args['token-file'] && args['token-file'] !== true ? args['token-file'] : null
+  const fromEnv = process.env.SPACE_TOKEN || null
+
+  // 显式参数 > 环境变量。原来环境变量会静默盖掉 --token-file，多 agent 共用 shell 时
+  // 会让 agent 以别人的身份干活（实测过）。
+  if (fromArg) {
+    if (fromEnv) console.error('space: 警告：同时给了 --token 与 SPACE_TOKEN，采用 --token')
+    return fromArg
   }
-  return null
+  if (fromFile) {
+    if (fromEnv) console.error('space: 警告：同时给了 --token-file 与 SPACE_TOKEN，采用 --token-file')
+    if (!existsSync(fromFile)) die(`token file not found: ${fromFile}`)
+    return readFileSync(fromFile, 'utf8').trim()
+  }
+  return fromEnv
 }
 
 const CONSTITUTION = `# 空间宪法 (constitution: {VERSION})
@@ -127,7 +135,12 @@ function cmdToken(args) {
     if (!memberId) die('usage: space token revoke --member <id>')
     const res = revokeMember(db, memberId, { appendEvent, reason: args.reason ?? 'revoked' })
     console.log(`revoked ${res.tokens_revoked} token(s) for ${memberId}; requeued ${res.tasks_requeued} task(s)`)
-  } else die('usage: space token issue|list|revoke ...')
+  } else if (sub === 'unrevoke') {
+    const memberId = args.member
+    if (!memberId) die('usage: space token unrevoke --member <id>')
+    const res = unrevokeMember(db, memberId)
+    console.log(`unrevoked ${memberId}; reactivated ${res.tokens_reactivated} token(s)`)
+  } else die('usage: space token issue|list|revoke|unrevoke ...')
   db.close()
 }
 
@@ -144,7 +157,9 @@ function cmdServe(args) {
   const ctx = {
     db,
     member,
-    maxBlockSec: Number(member.capabilities?.max_block_sec ?? 20),
+    // 未 attach 前除 attach 外的工具一律拒绝：宪法版本门不能靠自觉（协议 §2.3）。
+    // max_block_sec 也放这里：attach 时由服务端收口后写入，供后续 wait 读取。
+    session: { attached: false },
     // 身份每次调用重查：吊销/过期即时生效（ADR 0007）
     reauth: () => authenticate(db, token),
   }
@@ -232,7 +247,7 @@ function cmdTrace(args) {
 
 async function cmdVerify(args) {
   const db = openDb(args.dir)
-  const res = await verify({ db, member: null })
+  const res = await verify({ db, member: null, admin: true })
   console.log(res.ok ? 'projection OK (state == event reduction)' : `DRIFT: ${JSON.stringify(res.drift, null, 2)}`)
   db.close()
   process.exit(res.ok ? 0 : 1)

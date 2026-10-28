@@ -21,8 +21,17 @@ export const TERMINAL_STATES = new Set(['DONE', 'FAILED', 'REJECTED', 'CANCELED'
 export const ACTIVE_STATES = new Set(['PENDING', 'CLAIMED', 'WORKING'])
 export const INTERRUPTED_STATES = new Set(['WAITING_INPUT', 'WAITING_AUTH', 'BLOCKED'])
 
-/** 任务类型（协议 §7.1） */
+/** 任务类型（协议 §7.1）。必须在 server 侧校验——schema 只是提示，不是边界。 */
 export const TASK_TYPES = new Set(['assign', 'broadcast', 'revision', 'question', 'answer', 'notice'])
+
+/** 只有 QA 或人可打回他人任务（协议 §4.2「QA（非本人）」） */
+export function assertCanRequestRevision(member) {
+  if (member.kind === 'human' || member.role === 'qa') return
+  throw new SpaceError(
+    'FORBIDDEN_ROLE',
+    `只有 qa 或 human 可以打回他人任务；${member.id} is ${member.kind}/${member.role}`,
+  )
+}
 
 /** 迁移表（协议 §4.2）。只列允许的边，表外的一律非法。 */
 export const TRANSITIONS = {
@@ -77,15 +86,18 @@ export function assertLeaseHolder(task, leaseId, member) {
 }
 
 /**
- * 认领互斥（协议 §8.1）：单条事务内判断，claims 已满即拒绝。
- * 注意：返回的是「竞争失败」而非错误路径，调用方按 TASK_ALREADY_CLAIMED 处理。
+ * 认领互斥（协议 §8.1）：单条事务内判断。
+ *
+ * 语义（修复见 ADR 0008）：`claims_count` 是**当前并发认领数**，不是终身计数。
+ * 任务回到 PENDING 时它必须归零，否则一次租约过期就把任务变成「PENDING 但谁也不能认领」的僵尸。
+ * 重试预算由 `attempts` 单独承担（sweep 时 +1，超 MAX_ATTEMPTS 转 FAILED）。
  */
 export function assertClaimable(task) {
-  if (!ACTIVE_STATES.has(task.state) || task.state !== 'PENDING') {
+  if (task.state !== 'PENDING') {
     throw new SpaceError('TASK_ALREADY_CLAIMED', `task ${task.id} is ${task.state}, not claimable`)
   }
-  if (task.claims_count >= task.claims_max) {
-    throw new SpaceError('TASK_ALREADY_CLAIMED', `task ${task.id} has no claim slots left (${task.claims_count}/${task.claims_max})`)
+  if (Number(task.claims_count ?? 0) >= Number(task.claims_max ?? 1)) {
+    throw new SpaceError('TASK_ALREADY_CLAIMED', `task ${task.id} already has ${task.claims_count} active claim(s)`)
   }
 }
 
@@ -120,6 +132,22 @@ export function assertCanRelaxHardGate(member) {
 
 /** 轮次槽位上限（协议 §5.1） */
 export const SLOT_LIMITS = { design: 3, joint_debug: 3, acceptance: 3 }
+
+/**
+ * CP → slot 的服务端映射（协议 §5.2）。
+ *
+ * 修复（ADR 0008）：原来 slot 直接取客户端入参，等于让被约束方自己选边界——
+ * 换个字符串就重置轮次。现在客户端只能报 CP 名，slot 由服务端查表得出。
+ */
+export const SLOT_BY_CP = {
+  CP1: 'design',
+  'CP2.1': 'design',
+  'CP2.2': 'design',
+  CP3: 'acceptance',
+  CP4: 'acceptance',
+  CP5: 'acceptance',
+  '3.4': 'joint_debug',
+}
 
 /**
  * R2：revision 任务创建时按语义归属确定 slot，round += 1，超限拒绝。
