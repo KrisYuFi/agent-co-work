@@ -11,13 +11,14 @@
  *   space tasks  [--op X] / space members
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { openDb, resolveSpaceDir, metaGet } from './space/db.mjs'
 import { authenticate, issueToken, listTokens, revokeMember, unrevokeMember } from './space/tokens.mjs'
 import { appendEvent, formatEvent } from './space/events.mjs'
 import { serveStdio } from './space/mcp.mjs'
 import * as httpModule from './space/http.mjs'
+import * as gatewayModule from './space/gateway.mjs'
 import { verify } from './space/service.mjs'
 
 // ---------------------------------------------------------------- 参数解析
@@ -103,7 +104,27 @@ function cmdInit(args) {
   console.log(`space initialised at ${db.spaceDir}`)
   console.log(`  db           ${join(db.spaceDir, 'space.sqlite')}`)
   console.log(`  constitution ${constitutionPath} (v${version})`)
-  console.log(`\n下一步：space token issue --member dev-code --role developer`)
+  const members = args.members && args.members !== true ? String(args.members) : null
+  if (members) {
+    const tokensDir = join(db.spaceDir, 'tokens')
+    mkdirSync(tokensDir, { recursive: true })
+    const issued = []
+    for (const spec of members.split(',').map((x) => x.trim()).filter(Boolean)) {
+      // 格式：名字:角色[:kind]，例如 pm:pm、me:human:human
+      const [name, role, kind = 'role'] = spec.split(':')
+      if (!name || !role) die(`bad --members entry "${spec}" (expect 名字:角色[:kind])`)
+      const out = issueToken(db, { memberId: name, role, kind })
+      const file = join(tokensDir, `${name}.token`)
+      writeFileSync(file, out.token + '\n', { mode: 0o600 })
+      issued.push({ name, role, kind, file, token: out.token })
+    }
+    console.log(`\n已签发 ${issued.length} 个具名身份（token 只显示这一次）：`)
+    for (const m of issued) console.log(`  ${m.name.padEnd(12)} ${(m.kind === 'human' ? 'human' : m.role).padEnd(12)} ${m.token}  → ${m.file}`)
+    console.log(`\n用法示例（在 agent 会话里说）：`)
+    console.log(`  「space_join 到空间 http://127.0.0.1:7321/mcp，space 别名 work，token 用上面 ${issued[0].name} 那串，然后 space_attach，再循环 space_wait 等活」`)
+  } else {
+    console.log(`\n下一步：space token issue --member dev-code --role developer`)
+  }
   db.close()
 }
 
@@ -143,6 +164,12 @@ function cmdToken(args) {
     console.log(`unrevoked ${memberId}; reactivated ${res.tokens_reactivated} token(s)`)
   } else die('usage: space token issue|list|revoke|unrevoke ...')
   db.close()
+}
+
+function cmdConnect(args) {
+  const { serveGateway } = gatewayModule
+  const log = (msg) => console.error(`[gateway ${new Date().toISOString().slice(11, 19)}] ${msg}`)
+  serveGateway({ onLog: log })
 }
 
 function cmdServe(args) {
@@ -354,6 +381,9 @@ try {
     case 'serve':
       cmdServe(args)
       break
+    case 'connect':
+      cmdConnect(args)
+      break
     case 'attach':
       cmdAttach(args)
       break
@@ -372,11 +402,12 @@ try {
     default:
       console.log(`space — agent 协作空间（阶段 2 原型）
 
-  space init    [--dir <path>] [--constitution-version N]
+  space init    [--dir <path>] [--constitution-version N] [--members pm:pm,architect:architect,me:human:human]
   space token   issue --member <id> --role <r> [--kind role|human] [--scopes a,b] [--ttl 7d]
                 list | revoke --member <id>
   space serve   --token-file <p> | --token <t>   （stdio：一个成员一个进程，本机开发用）
                 --listen 0.0.0.0:7321           （hub：单进程 + HTTP，跨机器接入用）
+  space connect                                          （网关：启动不连空间，用 space_join 运行时加入）
   space attach  --runtime opencode|dsh|claude --token-file <p> [--url http://hub:7321/mcp]
   space trace   [--limit N] [--follow]
   space verify  （投影 vs 事件归约）

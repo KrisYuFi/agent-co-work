@@ -76,12 +76,22 @@ agent-co-work/
 **能跑原型，还不能当产品用。** 阶段 2 的最小原型已经跑通：
 
 ```bash
-node src/cli.mjs init --dir ./space
-node src/cli.mjs token issue --dir ./space --member dev-code --role developer > dev-code.token
-node src/cli.mjs serve --dir ./space --token-file dev-code.token    # stdio：本机开发，一个成员一个进程
-node src/cli.mjs serve --dir ./space --listen 0.0.0.0:7321          # hub：单进程 + HTTP，跨机器接入
-node src/cli.mjs trace --dir ./space                                 # 事件流就是 trace
+# 1) 建空间 + 一次签发全部具名身份
+node src/cli.mjs init --dir ./space --members pm:pm,architect:architect,qa:qa,me:human:human
+
+# 2) 起 hub（唯一常驻进程）
+node src/cli.mjs serve --dir ./space --listen 0.0.0.0:7321
+
+# 3) 会话里只配一行网关（不含空间地址、不含 token），之后用提示词决定挂到哪、以谁的身份
+#    { "mcp": { "space": { "type": "local", "command": ["node", "<repo>/src/cli.mjs", "connect"] } } }
 ```
+
+然后在任意 agent 会话里说一句：
+
+> 用 space_join 连到 http://127.0.0.1:7321/mcp（别名 work，token 是 spt_…），
+> 然后 space_attach，再循环 space_wait 等活。
+
+一个会话可以同时挂在多个空间上（`space_join` 起不同别名），`space trace` 看事件流。
 
 已实测成立的部分：
 

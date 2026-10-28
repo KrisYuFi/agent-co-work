@@ -2,6 +2,42 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。当前处于**设计阶段**，版本号用于标记设计与协议的里程碑。
 
+## [0.7.0] - 2026-10-28
+
+**入场方式改造完成（ADR 0011 / 0012）：开个会话，说一句就连上空间。**
+
+### Added
+
+- **`space connect`** —— 成员侧网关。启动**不连任何空间**，只提供 `space_join({space, url, token})` /
+  `space_leave({space})` / `space_spaces()`；加入后把 hub 的 16 个工具透传过去并注入 bearer
+- **多空间（ADR 0012）**：一个会话可同时加入多个空间，用别名区分；hub 工具在网关层多一个可选 `space` 参数。
+  只连一个时可省略；连了多个却省略则**拒绝**（`AMBIGUOUS_SPACE`），不猜
+- **`space init --members pm:pm,architect:architect,me:human:human`** —— 一条命令签发全部具名 token（0600）
+- 协议 §7.2（网关侧工具）、§2.2（身份交付方式）、§11（`NOT_JOINED` / `AMBIGUOUS_SPACE` / `UNKNOWN_SPACE`）
+
+### 验证
+
+| 实验 | 结果 |
+|---|---|
+| 网关：两个空间同时挂、隔离、歧义拒绝、坏 token 透传 | **11/11** |
+| **真实 agent 只凭提示词入场**（opencode，配置里只有网关） | **6/6** |
+
+`agent-join.mjs` 的关键证据：会话配置**不含任何空间地址与 token**
+
+```json
+{ "mcp": { "space": { "type": "local", "command": ["node", "<repo>/src/cli.mjs", "connect"] } } }
+```
+
+而 agent 只说了一句提示词就完成了 join → attach（报回身份 `worker`）→ wait → 认领 → 交付 → DONE。
+
+### Notes
+
+- token 由提示词给，**会进会话历史**；上下文压缩后需要重新给。这是 ADR 0011 记下的固有代价
+- 网关的 joined 列表在进程内存里，网关重启需重新 join
+- 这是「日常形态」的第一步：下一步可加凭证库（`space login`）让会话重启后自动恢复身份
+
+---
+
 ## [0.6.1] - 2026-10-28
 
 **修掉多机实跑暴露的租约缺口：agent 干活期间不心跳，任务会被自己人抢走。**
