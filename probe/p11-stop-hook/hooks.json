@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "/Users/krisyu/.nvm/versions/node/v26.1.0/bin/node /tmp/p11/log-hook.mjs PreToolUse" } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "/Users/krisyu/.nvm/versions/node/v26.1.0/bin/node /tmp/p11/stop-hook.mjs" } ] }
+    ]
+  }
+}

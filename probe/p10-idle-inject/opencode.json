@@ -1,0 +1,12 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "deepseek/deepseek-v4-pro",
+  "mcp": {
+    "probe": {
+      "type": "local",
+      "command": ["node", "../mcp/server.mjs", "--log", "mcp.jsonl"],
+      "enabled": true,
+      "timeout": 120000
+    }
+  }
+}
