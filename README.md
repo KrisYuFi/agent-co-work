@@ -84,6 +84,12 @@ node src/cli.mjs up --dir ./space --members pm:pm,architect:architect,qa:qa,me:h
 #    再把「②」里对应成员的那一行**整行粘贴**进会话 —— url、token、步骤都在里面
 ```
 
+想先看效果、不想自己开两个会话：
+
+```bash
+node examples/quickstart.mjs     # 两个真实 opencode 会话，照抄 up 打印的提示词跑完整链路（约 1 分钟，花两次模型调用）
+```
+
 然后在任意 agent 会话里说一句：
 
 > 用 space_join 连到 http://127.0.0.1:7321/mcp（别名 work，token 是 spt_…），

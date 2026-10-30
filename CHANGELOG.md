@@ -12,6 +12,8 @@
   与「② 每个成员一行、可整行粘贴的提示词（含 url + token）」+ 前台跑 hub。
   重跑**复用同一批 token**（明文在 `tokens/*.token`，0600），旧会话不会失联
 - `test/up.mjs` —— 8 条断言：幂等、token 复用、打印内容可用、up 起的 hub 能 attach、坏 token 被拒
+- `examples/quickstart.mjs` —— 两个真实 opencode 会话，**原样照抄** `space up` 打印的两行提示词
+  跑完 `派活 → 认领 → WORKING → publish → DONE + handoff → PM 看到 DONE`；以库内事实核对（8/8）
 
 ### 验证
 
