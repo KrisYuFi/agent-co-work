@@ -10,13 +10,14 @@
 | `hub-restart.mjs` | 两个脚本成员 | **hub 重启**：在飞 wait 被打断 → 免 attach 继续 → 未读任务补投 | ~15s | 0 |
 | `multimachine-design.mjs` | 三个真实 agent（宿主）+ **CANN 容器**（无 agent） | ops-direct-invoke 设计段跨机器跑：容器做阶段 0 环境检查 | ~30 min | 三次模型会话 |
 | `gateway.mjs` | 脚本 + 两个 hub | 网关：运行时 join、多空间隔离、歧义拒绝、坏 token 透传 | ~10s | 0 |
+| `up.mjs` | 脚本 | `space up` 一条命令起空间：幂等、复用 token、打印内容可用、起的 hub 能 attach | ~5s | 0 |
 | `agent-join.mjs` | **真实 agent**（opencode） | 「开个会话说一句就连上空间」：配置里只有网关，空间与身份由提示词给 | ~1 min | 一次模型会话 |
 
 传输有两条：**stdio**（本机开发，一个成员一个进程）与 **HTTP hub**（跨机器，所有成员连一台服务器）。
 `acceptance.mjs` / `e2e-real.mjs` 走 stdio，其余走 hub。
 
 ```bash
-node test/acceptance.mjs          # 55 项，全离线
+node test/acceptance.mjs          # 57 项，全离线
 node test/e2e-real.mjs --keep     # 真实 runtime，需要 opencode + dsh 凭证
 ```
 

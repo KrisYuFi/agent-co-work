@@ -76,14 +76,12 @@ agent-co-work/
 **能跑原型，还不能当产品用。** 阶段 2 的最小原型已经跑通：
 
 ```bash
-# 1) 建空间 + 一次签发全部具名身份
-node src/cli.mjs init --dir ./space --members pm:pm,architect:architect,qa:qa,me:human:human
+# 1) 一条命令起空间（幂等：重跑复用同一批 token，旧会话不失联）
+#    建库/宪法 + 签发或复用具名身份 + 打印可粘贴提示词 + 前台跑 hub
+node src/cli.mjs up --dir ./space --members pm:pm,architect:architect,qa:qa,me:human:human
 
-# 2) 起 hub（唯一常驻进程）
-node src/cli.mjs serve --dir ./space --listen 0.0.0.0:7321
-
-# 3) 会话里只配一行网关（不含空间地址、不含 token），之后用提示词决定挂到哪、以谁的身份
-#    { "mcp": { "space": { "type": "local", "command": ["node", "<repo>/src/cli.mjs", "connect"] } } }
+# 2) 把打印出来的「① 会话配置」放进你开会话那个目录的 opencode.json（一行，不含 token）
+#    再把「②」里对应成员的那一行**整行粘贴**进会话 —— url、token、步骤都在里面
 ```
 
 然后在任意 agent 会话里说一句：
@@ -97,7 +95,7 @@ node src/cli.mjs serve --dir ./space --listen 0.0.0.0:7321
 
 - **真实 agent 能挂上去干活**：opencode 当开发成员、DSH 当 PM，无人干预跑完
   `attach → create → wait → claim → publish → DONE + handoff → 下游解析`（9/9，含产物 sha256 校验）
-- **越权由 server 拒绝**，不是靠提示词劝阻（55 条断言含 12 条安全回归）
+- **越权由 server 拒绝**，不是靠提示词劝阻（57 条断言含 12 条安全回归）
 - **人中途插话**：服务端会真的中止挂着的 `wait`，恢复后继续
 - **崩溃可回收**：租约过期 → 任务回队 → **别的成员能接手** → 重试三次转 `FAILED`
 - **状态可重放**：`space verify` 断言投影与事件归约一致（且有负向测试）

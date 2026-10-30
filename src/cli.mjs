@@ -210,6 +210,95 @@ function cmdServe(args) {
   serveStdio(ctx, { name: 'space', version: '0.1.0', onLog: log })
 }
 
+/** 读/签发具名身份：已有 token 文件就复用（`space up` 可重复跑），否则签发并落 0600 文件。 */
+function ensureMembers(db, membersSpec) {
+  const tokensDir = join(db.spaceDir, 'tokens')
+  mkdirSync(tokensDir, { recursive: true })
+  const out = []
+  for (const spec of String(membersSpec).split(',').map((x) => x.trim()).filter(Boolean)) {
+    const [name, role, kind = 'role'] = spec.split(':')
+    if (!name || !role) die(`bad --members entry "${spec}" (expect 名字:角色[:kind])`)
+    const file = join(tokensDir, `${name}.token`)
+    if (existsSync(file)) {
+      // 复用：token 明文只在文件里（库里只有 sha256），重跑 up 不该让旧会话失联
+      out.push({ name, role, kind, token: readFileSync(file, 'utf8').trim(), file, reused: true })
+      continue
+    }
+    const { token } = issueToken(db, { memberId: name, role, kind })
+    writeFileSync(file, token + '\n', { mode: 0o600 })
+    out.push({ name, role, kind, token, file, reused: false })
+  }
+  return out
+}
+
+/**
+ * space up —— 起一个空间（幂等）：建库/宪法 + 复用或签发具名身份 + 打印可整行粘贴的提示词
+ * + 前台跑 hub。目标是把「开两个会话、各粘一句」之外的所有手工步骤消掉。
+ */
+function cmdUp(args) {
+  const dir = resolveSpaceDir(args.dir)
+  const fresh = !existsSync(join(dir, 'space.sqlite'))
+  const db = openDb(dir, { create: true })
+  const version = Number(args['constitution-version'] ?? metaGet(db, 'constitution_version') ?? 1)
+  db.prepare('update meta set value = ? where key = ?').run(String(version), 'constitution_version')
+  const constitutionPath = join(dir, 'AGENTS.md')
+  if (!existsSync(constitutionPath)) writeFileSync(constitutionPath, CONSTITUTION.replace('{VERSION}', String(version)))
+
+  const listen = String(args.listen && args.listen !== true ? args.listen : '127.0.0.1:7321')
+  const [host, port] = listen.split(':')
+  const alias = String(args.alias && args.alias !== true ? args.alias : 'work')
+  const displayHost = host === '0.0.0.0' ? '127.0.0.1' : host
+  const hubUrl = `http://${displayHost}:${port}/mcp`
+  const members = ensureMembers(db, args.members && args.members !== true ? args.members : 'me:human:human')
+  const cli = join(import.meta.dirname, 'cli.mjs')
+  // 在 Electron 里跑（比如 DSH 的沙箱）时，execPath 是桌面壳；打印 node 更不容易把人带坑里
+  const nodeBin = process.versions.electron ? 'node' : process.execPath
+  const joinJson = (m) => JSON.stringify({ space: alias, url: hubUrl, token: m.token })
+
+  console.log(`space   ${db.spaceDir}${fresh ? '  (新建)' : ''}`)
+  console.log(`hub     ${hubUrl}   alias: ${alias}`)
+  console.log(`宪法    ${constitutionPath} (v${version})`)
+  console.log(`\n① 会话配置（放进开会话那个目录的 opencode.json；不含 token，可以提交进 git）`)
+  console.log(
+    JSON.stringify(
+      {
+        $schema: 'https://opencode.ai/config.json',
+        mcp: { space: { type: 'local', command: [nodeBin, cli, 'connect'], enabled: true, timeout: 120000 } },
+      },
+      null,
+      2,
+    ),
+  )
+  console.log(`\n② 每个成员在自己的会话里整行粘贴（token 也在 ${join(db.spaceDir, 'tokens')}/*.token；重看就再跑一次 up --print-only）`)
+  for (const m of members) {
+    if (m.kind === 'human') {
+      console.log(`\n  [${m.name} · human]`)
+      console.log(
+        `  「调用 space_join，参数 ${joinJson(m)}；成功后 space_attach。你是人：用 space_task_list 看进度、space_msg_send 对某个 agent 说话、space_task_accept 放宽硬门槛」`,
+      )
+    } else {
+      console.log(`\n  [${m.name} · ${m.role}]`)
+      console.log(
+        `  「调用 space_join，参数 ${joinJson(m)}；成功后 space_attach；然后循环 space_wait 等活，接到 PENDING 任务就 claim → WORKING → 干活 → space_publish → DONE+handoff」`,
+      )
+    }
+  }
+  if (host === '0.0.0.0') console.log(`\n注意：别的机器上的成员把 127.0.0.1 换成这台机器的内网 IP。`)
+  console.log(`\nCtrl+C 停止 hub（空间数据留在 ${db.spaceDir}）。`)
+  if (args['print-only']) {
+    db.close()
+    return
+  }
+  const { serveHttp } = httpModule
+  serveHttp({
+    db,
+    host: host || '127.0.0.1',
+    port: Number(port || 7321),
+    authenticate,
+    onLog: (msg) => console.error(`[hub ${new Date().toISOString().slice(11, 19)}] ${msg}`),
+  })
+}
+
 function cmdAttach(args) {
   const db = openDb(args.dir)
   const token = readToken(args)
@@ -381,6 +470,9 @@ try {
     case 'serve':
       cmdServe(args)
       break
+    case 'up':
+      cmdUp(args)
+      break
     case 'connect':
       cmdConnect(args)
       break
@@ -405,6 +497,9 @@ try {
   space init    [--dir <path>] [--constitution-version N] [--members pm:pm,architect:architect,me:human:human]
   space token   issue --member <id> --role <r> [--kind role|human] [--scopes a,b] [--ttl 7d]
                 list | revoke --member <id>
+  space up      [--dir <path>] [--listen 127.0.0.1:7321] [--alias work]
+                [--members pm:pm,dev:developer,me:human:human] [--print-only]
+                一条命令起空间（幂等）：建库/宪法 + 签发或复用身份 + 打印可粘贴提示词 + 前台跑 hub
   space serve   --token-file <p> | --token <t>   （stdio：一个成员一个进程，本机开发用）
                 --listen 0.0.0.0:7321           （hub：单进程 + HTTP，跨机器接入用）
   space connect                                          （网关：启动不连空间，用 space_join 运行时加入）
