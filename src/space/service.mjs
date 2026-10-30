@@ -8,6 +8,7 @@
 
 import { metaGet, newId, txn } from './db.mjs'
 import { appendEvent, safeJson, verifyProjection } from './events.mjs'
+import { requeueHeldTasks } from './requeue.mjs'
 import {
   SLOT_BY_CP,
   SLOT_LIMITS,
@@ -248,11 +249,14 @@ export async function detach(ctx) {
   const { db, member } = ctx
   assertReady(ctx)
   if (ctx.session) ctx.session.attached = false
-  txn(db, () => {
+  return txn(db, () => {
+    // 主动下线 = 交还手上的活。否则会话关掉后任务要等租约过期 900s 才回队，
+    // 而「关会话」是明确信号，不该按崩溃处理（见 docs/background.md §3.1 R7 通道①）。
+    const requeued = requeueHeldTasks(db, member.id, { reason: 'detached' })
     db.prepare('update members set attached_at = null where id = ?').run(member.id)
-    appendEvent(db, { kind: 'member.detached', memberId: member.id, payload: {} })
+    appendEvent(db, { kind: 'member.detached', memberId: member.id, payload: { tasks_requeued: requeued.held } })
+    return { ok: true, tasks_requeued: requeued.held }
   })
-  return { ok: true }
 }
 
 /**

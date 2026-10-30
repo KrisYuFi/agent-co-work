@@ -121,6 +121,14 @@ DSH GUI 的停止按钮是否与 SIGINT 同一条 abort 路径，仍需人工确
 
 按 AGENTS.md 原则 4（探针先于实现），通道 ① 的实现（以及用法文档）以本表为准。
 
+**追加实测（2026-10-31，见 [probe/RESULTS.md](../probe/RESULTS.md) P10–P12）**：
+
+- opencode 上「推」可行：插件在 `session.idle` 注入消息会开新 turn → agent 可以真正空闲，由插件在有活时叫醒。
+  代价是**每次唤醒 = 一次完整模型 turn**，所以只适合低频兜底，`wait` 仍是主循环。
+- DSH 侧 Stop hook 本机无法实测（hooks bridge 0.1.2 与 dsh 0.2.1 版本不配套），待配套再验。
+- 「会话结束释放租约」已落实现：`space_detach` 现在会收回该成员持有的任务（回 PENDING、改派到角色、不算失败），
+  网关进程退出时自动 detach——崩溃检测因此不再依赖 900s 租约过期。
+
 ---
 
 ## 4 关键约束（不可协商）

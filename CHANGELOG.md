@@ -2,6 +2,33 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。当前处于**设计阶段**，版本号用于标记设计与协议的里程碑。
 
+## [0.8.0] - 2026-10-31
+
+**下线即交还 + 空闲可被唤醒。**
+
+### Added
+
+- **`space_detach` 现在会收回任务租约**：持有的任务立刻回 `PENDING`、改派到角色、**不算失败**（`attempts` 不增），
+  与 token 吊销共用同一实现（`src/space/requeue.mjs`）。返回 `{ok, tasks_requeued}`
+- **网关进程退出时自动 detach**（stdin 关闭 / SIGTERM / SIGINT / SIGHUP）→ 关会话不再等 900s 租约过期
+- **`plugins/opencode-space.js`**：空闲唤醒插件。轮询 `space_task_list`（0 token），
+  只有会话 idle 且有 PENDING 任务时才注入一次唤醒（首次带 join 信息），有冷却与次数上限
+- `test/detach-release.mjs`（10/10）：直接 detach 与网关退出的两条下线路径都立刻回队、同角色可接手
+- `examples/idle-wake.mjs`（6/6）：真实 opencode 会话**没有任何空间提示词**，被插件唤醒后自己
+  join → attach → claim → WORKING
+- 探针 P10–P12（`probe/RESULTS.md`）：opencode 可 idle 注入；DSH Stop hook 因版本不配套未验；hook 成本结论
+
+### 验证
+
+| 套件 | 结果 |
+|---|---|
+| `test/acceptance.mjs` | 57/57（吊销路径改用共享 requeue 后无回归） |
+| `test/detach-release.mjs` | 10/10 |
+| `examples/idle-wake.mjs` | 6/6（真实模型） |
+| `probe/p10-idle-inject` | PASS |
+
+---
+
 ## [0.7.1] - 2026-10-30
 
 **一条命令起空间：`space up`。**

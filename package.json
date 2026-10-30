@@ -1,6 +1,6 @@
 {
   "name": "agent-co-work",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "private": true,
   "description": "agent 协作空间：多个独立 agent 会话经中心服务协作（阶段 3 前原型）",
   "type": "module",
@@ -11,9 +11,10 @@
     "node": ">=22.5"
   },
   "scripts": {
-    "test": "node test/acceptance.mjs && node test/gateway.mjs && node test/up.mjs",
+    "test": "node test/acceptance.mjs && node test/gateway.mjs && node test/up.mjs && node test/detach-release.mjs",
     "test:up": "node test/up.mjs",
     "up": "node src/cli.mjs up",
-    "demo": "node examples/quickstart.mjs"
+    "demo": "node examples/quickstart.mjs",
+    "demo:idle-wake": "node examples/idle-wake.mjs"
   }
 }

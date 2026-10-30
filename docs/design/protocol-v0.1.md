@@ -351,7 +351,7 @@ server 派活给 dev-hw
 | tool | 入参（要点） | 返回 | 备注 |
 |---|---|---|---|
 | `space_attach` | `capabilities{max_block_sec}`（server 收口到 ≤300）, `constitution_version` | `{member, constitution_version, cursor, unread_tasks[], hint}` | token 是**进程启动参数**，不是入参 |
-| `space_detach` | — | `{ok}` | |
+| `space_detach` | — | `{ok, tasks_requeued}` | **下线即交还**：持有的任务立刻回 `PENDING` 并改派到角色（与 token 吊销共用同一实现）；不算失败（`attempts` 不增） |
 | `space_wait` | `since_cursor`, `timeout_sec`（默认 20；clamp 到 `max_block_sec` 与 300） | `{reason: events\|timeout, cursor, events[], tasks[], effective_timeout_sec}` | 超时是正常返回；`notifications/cancelled` 会中止 handler |
 | `space_task_create` | `type`, `to` \| `role`, `op`（revision 时忽略）, `step`, `cp`（revision 必填）, `inputs[]`, `expected`, `refs[]`, `claims`（v0.2 只支持 1） | `{task_id, slot_round, state}` | revision 的 op/slot 由 server 定 |
 | `space_task_claim` | `task_id`, `lease_sec`（≤3600） | `{lease_id, lease_until, state, idempotent?}` | 重试同一成员返回原租约（幂等） |

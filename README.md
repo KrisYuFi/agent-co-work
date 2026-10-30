@@ -92,9 +92,21 @@ space up --dir ~/spaces/demo --members pm:pm,architect:architect,qa:qa,me:human:
 想先看效果、不想自己开两个会话：
 
 ```bash
-npm run demo     # = node examples/quickstart.mjs：两个真实 opencode 会话，
-                 #   照抄 up 打印的提示词跑完整链路（约 1 分钟，花两次模型调用）
+npm run demo            # 两个真实 opencode 会话，照抄 up 打印的提示词跑完整链路（约 1 分钟）
+npm run demo:idle-wake  # 「空闲被唤醒」：会话没有任何空间提示词，插件发现有活才把它叫醒
 ```
+
+### 可选：让空闲的 agent 自己醒来（opencode 插件）
+
+把 `plugins/opencode-space.js` 放进会话目录的 `.opencode/plugins/`，启动时给环境变量：
+
+```bash
+SPACE_URL=http://127.0.0.1:7321/mcp SPACE_TOKEN=spt_xxx SPACE_ALIAS=work opencode
+```
+
+插件每 20s 只读地查一次空间（**0 token**），有 PENDING 任务且会话空闲时才注入一次唤醒
+（一次唤醒 = 一次模型 turn，所以有冷却和上限）。这样 agent 不必一直卡在 `space_wait` 里，
+人随时打字都能被立刻响应。
 
 然后在任意 agent 会话里说一句：
 

@@ -107,7 +107,7 @@ export function createGateway({ onLog = () => {} } = {}) {
     return msg.result
   }
 
-  async function callTool(name, args = {}) {
+  async function callTool(name, args = {}, opts = {}) {
     // ── 网关自己的三个工具
     if (name === 'space_join') {
       if (!args.space || !args.url || !args.token) throw Object.assign(new Error('space_join requires {space, url, token}'), { code: 'EVIDENCE_INSUFFICIENT' })
@@ -128,10 +128,27 @@ export function createGateway({ onLog = () => {} } = {}) {
     // ── 其余全部转发给目标 hub
     const target = resolveSpace(args)
     const timeoutMs = args?.timeout_sec ? (Number(args.timeout_sec) + 30) * 1000 : 120_000
-    return callHubTool(target, name, args, { timeoutMs })
+    return callHubTool(target, name, args, { ...opts, timeoutMs })
   }
 
-  return { joined, callTool, resolveSpace }
+  /** 下线前把每个空间都 detach 一次：让 hub 立刻收回租约，而不是等 900s 过期 */
+  async function detachAll() {
+    const aliases = [...joined.keys()]
+    if (aliases.length === 0) return
+    onLog(`shutting down — detaching from ${aliases.length} space(s): ${aliases.join(', ')}`)
+    await Promise.allSettled(
+      aliases.map(async (alias) => {
+        try {
+          await callTool('space_detach', { space: alias }, { timeoutMs: 3000 })
+          onLog(`detached "${alias}"`)
+        } catch (err) {
+          onLog(`detach "${alias}" failed (ignored): ${err?.message ?? err}`)
+        }
+      }),
+    )
+  }
+
+  return { joined, callTool, resolveSpace, detachAll }
 }
 
 /** stdio 传输：一个会话一个网关进程 */
@@ -206,7 +223,23 @@ export function serveGateway({ name = 'space-gateway', version = '0.1.0', onLog 
       handle(msg).catch((err) => onLog(`crashed: ${err?.message ?? err}`))
     }
   })
-  process.stdin.on('end', () => process.exit(0))
+  // 会话结束 = 成员下线：先交出持有的任务，再退出。
+  // 不这么做的话，任务要等默认 900s 租约过期才回队（多机实跑踩过，见 ADR 0010）。
+  let closing = false
+  const shutdown = async (why) => {
+    if (closing) return
+    closing = true
+    try {
+      await gw.detachAll()
+    } finally {
+      onLog(`exit (${why})`)
+      process.exit(0)
+    }
+  }
+  process.stdin.on('end', () => shutdown('stdin closed'))
+  process.on('SIGTERM', () => shutdown('SIGTERM'))
+  process.on('SIGINT', () => shutdown('SIGINT'))
+  process.on('SIGHUP', () => shutdown('SIGHUP'))
 
   onLog('gateway ready（未加入任何空间；用 space_join 加入）')
 }

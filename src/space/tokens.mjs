@@ -9,6 +9,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { SpaceError } from './invariants.mjs'
 import { txn } from './db.mjs'
 import { appendEvent } from './events.mjs'
+import { requeueHeldTasks } from './requeue.mjs'
 
 export const TOKEN_PREFIX = 'spt_'
 
@@ -82,59 +83,18 @@ export function revokeMember(db, memberId, { appendEvent, reason = 'revoked' } =
       .run(now, memberId)
     db.prepare('update members set status = ? where id = ?').run('revoked', memberId)
 
-    // 收回租约：CLAIMED / WORKING 回 PENDING
-    const held = db
-      .prepare(
-        "select id, state, to_member from tasks where owner = ? and state in ('CLAIMED','WORKING','WAITING_INPUT','WAITING_AUTH','BLOCKED')",
-      )
-      .all(memberId)
-    const revoked = db.prepare('select role from members where id = ?').get(memberId)
-    for (const t of held) {
-      // claims_count 必须归零：它是「当前并发认领数」，不清零任务就再也认领不了（ADR 0008）
-      // to_member 也必须改派：否则回收后仍写着已吊销成员，别人照样接不了（换了个形态的卡死）
-      const reassign = t.to_member === memberId
-      db.prepare(
-        `update tasks set state = ?, lease_id = null, lease_until = null, owner = null, claims_count = 0,
-           to_member = case when ? then null else to_member end,
-           role = case when ? then ? else role end,
-           updated_at = ?
-         where id = ?`,
-      ).run('PENDING', reassign ? 1 : 0, reassign ? 1 : 0, revoked?.role ?? null, now, t.id)
-      appendEvent?.(db, {
-        kind: 'task.requeued',
-        taskId: t.id,
-        memberId,
-        payload: { reason, from: t.state, to: 'PENDING', reassigned_to_role: reassign ? revoked?.role ?? null : null },
-      })
-    }
-
-    // 还没开工但派给该成员的任务，同样要改派，否则永远没人能领
-    const addressed = db
-      .prepare("select id from tasks where state = 'PENDING' and to_member = ?")
-      .all(memberId)
-    for (const t of addressed) {
-      db.prepare('update tasks set to_member = null, role = ?, updated_at = ? where id = ?').run(
-        revoked?.role ?? null,
-        now,
-        t.id,
-      )
-      appendEvent?.(db, {
-        kind: 'task.requeued',
-        taskId: t.id,
-        memberId,
-        payload: { reason: `${reason}:reassigned`, from: 'PENDING', to: 'PENDING', reassigned_to_role: revoked?.role ?? null },
-      })
-    }
+    // 收回任务租约（含「派了但没开工」的改派）：与 detach 共用同一实现
+    const requeued = requeueHeldTasks(db, memberId, { reason, emit: appendEvent })
 
     db.prepare('update resources set lease_id = null, member_id = null, until = null where member_id = ?').run(memberId)
     appendEvent?.(db, {
       kind: 'token.revoked',
       memberId,
-      payload: { reason, tokens_revoked: res.changes, tasks_requeued: held.length },
+      payload: { reason, tokens_revoked: res.changes, tasks_requeued: requeued.held },
     })
     // 与 member.detached 同发：ADR 0007 声称「吊销 = 退场」，那就真的退场
     appendEvent?.(db, { kind: 'member.detached', memberId, payload: { reason } })
-    return { tokens_revoked: Number(res.changes), tasks_requeued: held.length }
+    return { tokens_revoked: Number(res.changes), tasks_requeued: requeued.held }
   })
 }
 
