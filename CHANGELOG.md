@@ -14,6 +14,8 @@
 - `test/up.mjs` —— 8 条断言：幂等、token 复用、打印内容可用、up 起的 hub 能 attach、坏 token 被拒
 - `examples/quickstart.mjs` —— 两个真实 opencode 会话，**原样照抄** `space up` 打印的两行提示词
   跑完 `派活 → 认领 → WORKING → publish → DONE + handoff → PM 看到 DONE`；以库内事实核对（8/8）
+- `package.json` + `bin.space` —— `npm link` 后可以在任何目录用 `space`，
+  不再要求「必须在仓库根目录执行」（README 之前漏了这句，是实际踩过的坑）
 
 ### 验证
 

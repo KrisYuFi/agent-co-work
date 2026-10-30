@@ -76,18 +76,24 @@ agent-co-work/
 **能跑原型，还不能当产品用。** 阶段 2 的最小原型已经跑通：
 
 ```bash
+# 0) 一次性安装命令（在仓库根目录）：之后在任何目录都能用 `space`
+npm link            # 或：chmod +x src/cli.mjs && ln -s "$PWD/src/cli.mjs" "$(dirname "$(which node)")/space"
+
 # 1) 一条命令起空间（幂等：重跑复用同一批 token，旧会话不失联）
 #    建库/宪法 + 签发或复用具名身份 + 打印可粘贴提示词 + 前台跑 hub
-node src/cli.mjs up --dir ./space --members pm:pm,architect:architect,qa:qa,me:human:human
+space up --dir ~/spaces/demo --members pm:pm,architect:architect,qa:qa,me:human:human
 
 # 2) 把打印出来的「① 会话配置」放进你开会话那个目录的 opencode.json（一行，不含 token）
 #    再把「②」里对应成员的那一行**整行粘贴**进会话 —— url、token、步骤都在里面
 ```
 
+没装命令也能跑（在仓库根目录）：`node src/cli.mjs up ...`。
+
 想先看效果、不想自己开两个会话：
 
 ```bash
-node examples/quickstart.mjs     # 两个真实 opencode 会话，照抄 up 打印的提示词跑完整链路（约 1 分钟，花两次模型调用）
+npm run demo     # = node examples/quickstart.mjs：两个真实 opencode 会话，
+                 #   照抄 up 打印的提示词跑完整链路（约 1 分钟，花两次模型调用）
 ```
 
 然后在任意 agent 会话里说一句：
