@@ -1,0 +1,30 @@
+{
+  "scenario": "p7",
+  "runtime": "dsh",
+  "action": "abort",
+  "at": "2026-10-30T12:59:40.083Z",
+  "blockSec": 120,
+  "marks": [
+    {
+      "label": "MCP tools/call:start",
+      "atMs": 2773,
+      "reason": "probe_block"
+    },
+    {
+      "label": "SIGINT 已发（headless 的 Ctrl+C）",
+      "atMs": 2773
+    },
+    {
+      "label": "MCP notifications/cancelled 收到",
+      "atMs": 3027
+    }
+  ],
+  "verdict": "PASS",
+  "assert": "停止（SIGINT 代理）→ 在飞的 MCP 工具请求收到 notifications/cancelled",
+  "cancelled": true,
+  "detail": "SIGINT 走了 abort 路径，cancellation 到达服务器",
+  "processExit": {
+    "code": 130,
+    "signal": null
+  }
+}

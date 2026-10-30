@@ -1,0 +1,46 @@
+{
+  "scenario": "p7",
+  "runtime": "opencode",
+  "action": "message",
+  "at": "2026-10-30T12:59:29.524Z",
+  "blockSec": 120,
+  "marks": [
+    {
+      "label": "opencode serve ready",
+      "atMs": 722,
+      "port": 7421
+    },
+    {
+      "label": "session created",
+      "atMs": 733,
+      "reason": "ses_e731b9ed9ffesnynjDvcJpP63s"
+    },
+    {
+      "label": "prompt_async sent",
+      "atMs": 742
+    },
+    {
+      "label": "MCP tools/call:start",
+      "atMs": 9819,
+      "reason": "probe_block"
+    },
+    {
+      "label": "第二个人消息已发（人直接输入）",
+      "atMs": 9824,
+      "reason": "HTTP 204"
+    },
+    {
+      "label": "等 cancelled 超时（20000ms）",
+      "atMs": 29992
+    }
+  ],
+  "verdict": "FAIL",
+  "assert": "在 agent 会话里停止 → 在飞的 MCP 工具请求收到 notifications/cancelled",
+  "cancelled": false,
+  "cancelLatencyMs": null,
+  "detail": "直接输入不会打断在飞工具调用（消息应是排队到 turn 之后）；人必须先「停止」",
+  "statusAfter": "{\"ses_e731b9ed9ffesnynjDvcJpP63s\":{\"type\":\"busy\"}}",
+  "toolArgs": {
+    "seconds": 120
+  }
+}

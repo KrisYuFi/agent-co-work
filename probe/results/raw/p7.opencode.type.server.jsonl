@@ -1,0 +1,8 @@
+{"ts":1793365140025,"sinceStartMs":1,"event":"server:start","pid":77387,"logPath":"/Users/krisyu/Desktop/CANN/agent-co-work/probe/work/p4a.opencode.2026-10-30T12-58-59-025Z/mcp-server.jsonl"}
+{"ts":1793365140026,"sinceStartMs":2,"event":"request","pid":77387,"method":"initialize","id":0}
+{"ts":1793365140026,"sinceStartMs":2,"event":"initialize","pid":77387,"protocolVersion":"2025-11-25","clientInfo":{"name":"opencode","version":"1.18.23"}}
+{"ts":1793365140029,"sinceStartMs":5,"event":"request","pid":77387,"method":"notifications/initialized","id":null}
+{"ts":1793365140029,"sinceStartMs":5,"event":"initialized","pid":77387}
+{"ts":1793365140029,"sinceStartMs":5,"event":"request","pid":77387,"method":"tools/list","id":1}
+{"ts":1793365148652,"sinceStartMs":8628,"event":"request","pid":77387,"method":"tools/call","id":2}
+{"ts":1793365148652,"sinceStartMs":8628,"event":"tools/call:start","pid":77387,"tool":"probe_block","args":{"seconds":120},"progressToken":2}

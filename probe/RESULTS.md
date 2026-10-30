@@ -129,3 +129,33 @@ DSH 的 MCP 桥在标准 `initialize` 之前先发一个 `server/discover`（id 
 | 2 | 阻塞上限的真实天花板（300s / 600s / 更长） | 阶段 2 实测前，按需推一次即可 |
 | 3 | 工具调用超时后 session 的可用性（能否继续调工具、上下文是否被污染） | 阶段 2（影响 `wait` 超时返回后的行为） |
 | 4 | 人中途插话打断 `wait`（§6.2 的核心卖点） | 阶段 2 验收剧本已含此项 |
+
+---
+
+## 追加探针 P7–P9：人「会话内打断」（2026-10-30，阶段 3 前置）
+
+> 背景：[background.md §3.1](../docs/background.md) 把 R7「人能中途干预」澄清成**会话内**主通道——
+> 人打开 agent 自己的会话盯着看、直接输入，而不是往空间里发消息。
+> 这要求 runtime 在「人停止当前 turn」时，把 MCP 的取消通知传到**正在阻塞的工具调用**上。
+> 脚本：[`p7-interrupt.mjs`](p7-interrupt.mjs)。判决只看 `probe/mcp/server.mjs` 的 JSONL。
+
+| # | 假设 | opencode 1.18.23 | dsh 0.2.1-rc.2 |
+|---|---|---|---|
+| **P7** | 人**停止**当前 turn → 在飞的 MCP 工具调用收到 `notifications/cancelled` | ✅ `/abort` → 41ms 后 cancelled | ✅ SIGINT → ~230ms 后 cancelled，随后 `stdin:end` |
+| **P8** | 人**直接输入新消息**（不按停止）会打断在飞工具调用 | ❌ 20s 内无 cancelled（HTTP 204，消息排队到 turn 之后） | 未测（GUI，需人工） |
+| **P9** | 同一会话能被**第二个前端**挂上看并输入 | ✅ `opencode attach <url> -s <session>`；`opencode web` 也是同一 server 的客户端 | ⚠️ Desktop GUI 的会话本人可打开；`dsh headless` 是一次性执行，不行 |
+
+证据（`results/raw/`）：
+
+- `p7.opencode.stop.json` + `.server.jsonl`：`tools/call:start` 后 41ms 出现
+  `cancelled {"requestId":2,"reason":"AbortError: The operation was aborted."}`
+- `p7.opencode.type.json` + `.server.jsonl`：发出第二条消息后 20s 内**没有** cancelled
+- `p7.dsh.stop.json` + `.server.jsonl`：SIGINT 后 ~230ms 收到 cancelled，之后 `stdin:end`
+
+**结论**
+
+1. **通道①成立**，但口径是「**先停再输入**」：直接打字不会打断在飞的工具调用（opencode 会把它排队到 turn 之后）。
+   用法上必须写清，否则人会觉得「我说了它没反应」。
+2. DSH 的 SIGINT 能传播 cancellation，说明 abort 路径是通的；**GUI 停止按钮是否同一条路**仍需人工确认（P8 的 DSH 列）。
+3. P9 让「盯着看」成立：opencode 是 server + 多前端（attach / web）结构，人挂上去看到的就是**同一个会话**；
+   DSH 在 GUI 里打开自己的会话天然成立，headless 则明确放弃这个能力（与 background §3.1 的判断一致）。

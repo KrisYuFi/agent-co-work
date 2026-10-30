@@ -96,7 +96,8 @@
 - **默认形态是交互会话**；`headless`（D 档）是「agent 已经调得比较好」之后的选择，**明确放弃实时盯人这个能力**，不把它视为缺陷。
 - 拆解「打断」这个词在协议里的边界：**空间推不动一个正在生成的 turn**；②只在工具调用边界生效；**硬停止 = 关掉会话**（runtime 能力，不是空间能力）。
 - 服务端已为通道 ① 预埋：`notifications/cancelled` 中止在飞的 `wait` handler（`src/space/mcp.mjs`）、`wait` 一发现 abort 就收手（`src/space/service.mjs`），验收里「人插话后恢复等待」已绿。
-  **但未验证**：各 runtime 的客户端在「人在会话里输入」时是否真的发这个 cancellation —— 列为 **P4 探针**（见 §3.1 末尾）。
+- **P7/P8 已实测**（[probe/RESULTS.md](../probe/RESULTS.md)）：opencode `abort` 与 dsh `SIGINT` 都会把 cancellation 传到在飞的 MCP 工具调用（41ms / ~230ms）；
+  **但直接输入不会打断**——opencode 把新消息排队到 turn 之后。所以人动作的口径是「**先停，再输入**」。
 - **审计归属**：人替成员代打时，空间事件记在**该成员**名下，不是 human。倾向把权威动作（放宽硬门槛 `relax`、收回任务）保留在**人自己的 human 会话**里做，日常纠正走键盘——这条待确认。
 
 不随本次变更改动的既有结论（来自上一轮讨论，仍成立）：
@@ -106,15 +107,19 @@
 - **身份属于会话（Q1 = ii）**：同一目录可并存多个不同身份的会话；「人下场干活」= 换一个角色身份的会话，不给 human 角色特权（唯一例外是既有的 `relax` 与拟议的「收回任务」）。
 - **本机与服务器同一套流程（Q2）**：本机用回环地址，差别只有「谁常驻」。
 
-#### 待验：P4 探针（决定通道 ① 是否成立）
+#### 已验证：P7/P8/P9 探针（2026-10-30）
 
-| # | 假设 | 不成立的后果 | 判决口径 |
+| # | 假设 | 结果 | 证据 |
 |---|---|---|---|
-| P4a | 在 opencode 会话里停止/插入新输入时，客户端会向**在飞的 MCP 工具调用**发 `notifications/cancelled` | 通道 ① 在「turn 中间」不可用，只能等下一次工具边界 | 探针服务器侧 JSONL 必须出现该请求的 cancelled |
-| P4b | DSH 的 GUI 会话同理（用户停止或输入） | DSH 上只能靠 `wait` 超时（默认 20s）才听到人说话 | 同上 |
-| P4c | 同一个会话能被**第二个前端**挂上看并输入（opencode `serve`+`attach`/`web`；DSH Desktop ↔ headless） | 「盯着看」只能事后看 transcript，退化为传统 CANNBot 的体验 | 两个客户端同时在线且都能驱动同一会话 |
+| **P7** | 人**停止**当前 turn → 在飞的 MCP 工具调用收到 `notifications/cancelled` | ✅ opencode（`/abort`，41ms）· ✅ dsh（SIGINT，~230ms） | `probe/results/raw/p7.{opencode,dsh}.stop.*` |
+| **P8** | 人**直接输入新消息**（不按停止）会打断在飞工具调用 | ❌ opencode：20s 内无 cancelled，消息排队；dsh GUI 未测 | `probe/results/raw/p7.opencode.type.*` |
+| **P9** | 同一会话能被**第二个前端**挂上看并输入 | ✅ opencode `attach -s <session>` / `web`；⚠️ DSH GUI 可开自己的会话，`headless` 不行 | `p7-interrupt.mjs` 头注释 + `opencode attach --help` |
 
-按 AGENTS.md 原则 4（探针先于实现），P4 结论出来前不实现通道 ① 的任何东西。
+**用法口径（通道 ① 成立的前提）**：人看到 agent 做错了 → **先停止当前 turn，再输入纠正**。
+直接打字在 opencode 上只是排队，agent 仍会把当前工具调用跑完（可能是几分钟的 `wait`）。
+DSH GUI 的停止按钮是否与 SIGINT 同一条 abort 路径，仍需人工确认（列入 P8 待测）。
+
+按 AGENTS.md 原则 4（探针先于实现），通道 ① 的实现（以及用法文档）以本表为准。
 
 ---
 

@@ -19,6 +19,7 @@
 | `mcp/smoke-client.mjs` | 本地自检客户端。先证明服务器本身是对的，否则 runtime 上的失败分不清是「服务器坏了」还是「runtime 不支持」 |
 | `run.mjs` | 一个 `(scenario, runtime)` = 一次运行。生成临时配置（**不碰用户全局配置**）、计时、读回服务器日志、写 `results/raw/*.json` |
 | `mcp/http-server.mjs` | **最小 MCP over Streamable HTTP** 服务器（零依赖）。用于验证 opencode remote / DSH streamable-http 能否接入——中心化 hub 的前提 |
+| `p7-interrupt.mjs` | **P7/P8 探针**：人在会话里「停止 / 直接输入」时，在飞的 MCP 工具调用会不会收到 `notifications/cancelled`。opencode 走 `/session/{id}/abort`（TUI 停止同一路径），dsh 走 SIGINT 代理 |
 | `results/raw/<tag>.json` | 每次运行的原始记录，含判决、wall time、工具是否真的跑完、服务器侧阻塞时长 |
 | `results/raw/<tag>.server.jsonl` | 对应的**服务器侧原始日志**（判决证据），随记录入库 |
 | `work/` | 每次运行的工作目录（配置 + 服务器日志），可随时删 |
@@ -54,6 +55,11 @@ node probe/run.mjs --scenario p3-progress --runtime dsh      --block 150 --mcp-t
 # 6. 对照：内置 shell 工具阻塞（不走 MCP）
 node probe/run.mjs --scenario p3-bash --runtime opencode --block 150
 node probe/run.mjs --scenario p3-bash --runtime dsh      --block 150
+
+# 7. P7/P8：人会话内「停止 / 直接输入」能否打断在飞工具调用（阶段 3 前置）
+node probe/p7-interrupt.mjs --scenario p7 --runtime opencode --label stop
+node probe/p7-interrupt.mjs --scenario p7 --runtime dsh      --label stop
+node probe/p7-interrupt.mjs --scenario p7 --runtime opencode --action message --label type
 ```
 
 ## 判决口径

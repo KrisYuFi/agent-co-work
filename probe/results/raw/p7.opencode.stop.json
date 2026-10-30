@@ -1,0 +1,46 @@
+{
+  "scenario": "p7",
+  "runtime": "opencode",
+  "action": "abort",
+  "at": "2026-10-30T12:58:57.334Z",
+  "blockSec": 120,
+  "marks": [
+    {
+      "label": "opencode serve ready",
+      "atMs": 725,
+      "port": 7421
+    },
+    {
+      "label": "session created",
+      "atMs": 735,
+      "reason": "ses_e731bc803ffe29aQaVpf6SuaOl"
+    },
+    {
+      "label": "prompt_async sent",
+      "atMs": 741
+    },
+    {
+      "label": "MCP tools/call:start",
+      "atMs": 8046,
+      "reason": "probe_block"
+    },
+    {
+      "label": "POST /abort（TUI 停止）",
+      "atMs": 8346,
+      "reason": "HTTP 200"
+    },
+    {
+      "label": "MCP notifications/cancelled 收到",
+      "atMs": 8347
+    }
+  ],
+  "verdict": "PASS",
+  "assert": "在 agent 会话里停止 → 在飞的 MCP 工具请求收到 notifications/cancelled",
+  "cancelled": true,
+  "cancelLatencyMs": 301,
+  "detail": "人在会话里按停止 → 在飞请求收到 cancelled（服务器侧时间戳 1793365136537）",
+  "statusAfter": "{}",
+  "toolArgs": {
+    "seconds": 120
+  }
+}
