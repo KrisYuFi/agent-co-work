@@ -159,3 +159,46 @@ DSH 的 MCP 桥在标准 `initialize` 之前先发一个 `server/discover`（id 
 2. DSH 的 SIGINT 能传播 cancellation，说明 abort 路径是通的；**GUI 停止按钮是否同一条路**仍需人工确认（P8 的 DSH 列）。
 3. P9 让「盯着看」成立：opencode 是 server + 多前端（attach / web）结构，人挂上去看到的就是**同一个会话**；
    DSH 在 GUI 里打开自己的会话天然成立，headless 则明确放弃这个能力（与 background §3.1 的判断一致）。
+
+---
+
+## 追加探针 P10–P12：hook 能不能替代/补强「挂起等待」（2026-10-31）
+
+> 背景：用户问「挂起等待能不能用 hook 解决」。结论先给：**不能替代，但能补一个洞**。
+> 判定不看文档，看真实 runtime 行为。
+
+### P10 opencode：插件在 `session.idle` 注入消息 → 新 turn ✅
+
+- 插件 `.opencode/plugins/idle-wake.js` 监听 `event.type === "session.idle"`，调用
+  `client.session.prompt({ path:{id}, body:{ parts:[{type:"text", text:"…probe_ping…"}] } })`
+- 实测（`opencode serve` + API 驱动，配置里挂 `probe/mcp/server.mjs`）：
+  1. 第一轮提示词「只回复 OK，不要调用任何工具」→ 模型回复 `OK` → `session.idle` 触发
+  2. 插件注入「调用 probe_ping」→ **新的 assistant 消息出现**，MCP 服务器日志出现 `tools/call:start probe_ping`
+  3. 最终消息序列：`只回复 OK… → OK → P10_IDLE_WAKE… → WAKE_OK`
+- **结论**：opencode 上「推」是成立的——agent 可以真正 idle（turn 结束），由插件在事件到达时把它叫醒。
+  代价是每次唤醒 = 一次完整模型 turn（上下文越长越贵），与 `wait` 的「0 token 轮询」是两种东西。
+
+证据：`probe/work/p10.*`（工作目录，日志未入库；判决见本节与 runs）
+
+### P11 DSH：Stop hook 拦截 ⚠️ 本机无法实测（版本不匹配）
+
+- DSH 0.2.1-rc.2（nvm 全局）**不带** hooks bridge；app 自带的是 `dsh-hooks-claude-code@0.1.2-rc.1`，
+  声明要求 `@deepseek-ai/dsh-*@^0.1.2-rc.1`，被 dsh 0.2.1 拒绝加载（提示用 `dsh plugin allow-version`）
+- 执行 `dsh plugin --profile headless allow-version '@deepseek-ai/dsh-hooks-claude-code@0.1.2-rc.1' --dsh-version 0.2.1-rc.2 --accept-risk`
+  之后插件能进入 composed config，但**实测 PreToolUse 与 Stop 都没有触发**（hook 脚本零调用，`space_*`/probe 工具仍正常）
+- 代码层面：bridge 监听 `agent/turn-stopping`，而 dsh 0.2.1 的 `dsh-agent-loop` 仍有该扩展点
+  → **理论上 Stop 可拦，但需要 version-matched 的 bridge 才能验**
+- 待验条件：用 Desktop 自带 runtime（0.1.2-rc.1）或等 0.2.x 的 bridge 发布
+
+### P12 成本：结构性结论已足够
+
+- `wait` 循环：每 20s 一次工具调用，**0 token**；只有真的有事才进入模型 turn
+- hook 唤醒：每次 = **一次完整 turn**（输入 ≈ 当前上下文），session 越长越贵
+- 因此 hook 只适合**低频兜底**（会话结束释放租约、漏等提醒），不适合当通知总线
+
+### 对设计的推论
+
+1. **主循环仍是 `wait`**（ADR 0004 不翻案）。
+2. opencode 上可以做「idle 推」的可选路径：插件定时查空间状态（0 token），有新活才注入
+   —— 这会让 agent 真正空闲、对人更可打断；但要处理「人正在打字时别注入」的冲突。
+3. DSH 侧先解决版本配套问题，再谈 Stop/idle 兜底。
